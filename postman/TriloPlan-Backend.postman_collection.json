@@ -1,0 +1,720 @@
+{
+  "info": {
+    "_postman_id": "27fabddf-f86e-4083-b212-489e3654d265",
+    "name": "TriloPlan Backend API",
+    "description": "Backend API for the video-chat platform (User app, Host app, Admin app). See BACKEND_PLAN.md, BRD.md and DEVELOPMENT_ROADMAP.md in the repo for full context.\n\n## Status (as of this export)\nBuilt and live: Phase 0 (foundations), Phase 1 (auth + profiles), Phase 3 (host discovery + presence).\nNot yet built: Phase 2 (wallet/recharge — pending payment gateway decision), calls, live broadcasting, gifting, withdrawals, admin panel.\n\n## Auth flow\n1. Run **Auth — Login** top to bottom: it requests+verifies an OTP for a USER phone, then requests+verifies an OTP for a HOST phone. Whichever Verify OTP ran most recently becomes your \"current session\" — the `accessToken`/`refreshToken`/`userId` collection variables — used automatically by every other request via the collection's Bearer auth.\n2. In non-production environments (this one, right now), OTP responses include `devCode` — auto-saved to a collection variable by a test script, since there's no real SMS provider wired up yet.\n3. Access tokens expire after 15 minutes. Use **Auth — Session → Refresh Access Token** to get a new pair — the old refresh token is invalidated the moment you do, so it's single-use.\n\nThis whole collection is safe to run top-to-bottom via Collection Runner: Auth — Login leaves you authenticated as the HOST test account, so Profile and Hosts folders (including the host-only endpoints) succeed; Auth — Session (Refresh, then Logout) is deliberately placed last so it doesn't clear your session before you've exercised everything else.\n\n## Known limitations right now\n- OTP delivery is dev-mode only (logged + returned as `devCode`) — no real SMS provider configured yet.\n- KYC document submission expects a `documentUrl` you already have — there's no presigned-upload endpoint yet since object storage (S3/R2) isn't wired up.\n- Presence is in-memory on a single server instance for now (will move to Redis once that's provisioned) — functionally identical for testing purposes.\n- Presence toggles also broadcast a `presence:update` event over Socket.io to connected clients. Postman can't easily demonstrate that (it's not a plain HTTP call) — connect with `auth: { token: <accessToken> }` and listen for `presence:update` to see it live from a frontend client.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000", "type": "string" },
+    { "key": "phone", "value": "9876500001", "type": "string", "description": "Test phone number for the USER-app login example." },
+    { "key": "hostPhone", "value": "9876500555", "type": "string", "description": "Test phone number for the HOST-app login example. Kept separate from `phone` since each OTP is single-use and a phone number's role is locked in on first signup." },
+    { "key": "devCode", "value": "", "type": "string", "description": "Auto-filled by 'Request OTP — User Phone' (dev-mode only)." },
+    { "key": "hostDevCode", "value": "", "type": "string", "description": "Auto-filled by 'Request OTP — Host Phone' (dev-mode only)." },
+    { "key": "accessToken", "value": "", "type": "string", "description": "Current session's access token — auto-filled by whichever Verify OTP / Refresh ran most recently." },
+    { "key": "refreshToken", "value": "", "type": "string", "description": "Current session's refresh token — auto-filled by whichever Verify OTP / Refresh ran most recently." },
+    { "key": "userId", "value": "", "type": "string", "description": "Current session's user id — auto-filled by Verify OTP." }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Confirms the API is up and can reach the database. No auth required."
+          },
+          "response": [
+            {
+              "name": "OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"status\": \"ok\",\n  \"db\": \"ok\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Auth — Login",
+      "description": "Shared by the User app and the Host app — both apps hit the same endpoints, differing only in the `role` sent on first-ever verify for a phone number. Admin login (email/password) is a separate flow, not yet built (Phase 9). Run this folder top to bottom.",
+      "item": [
+        {
+          "name": "1. Request OTP — User Phone",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{phone}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/otp/request",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "otp", "request"]
+            },
+            "description": "Sends a 6-digit OTP to `phone`. Rate-limited to 5 requests per 15 minutes per IP — you'll get a 429 if you spam this.\n\nIn non-production environments, the response includes `devCode` (the actual code) since no SMS provider is configured yet. Never rely on `devCode` being present in production."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.devCode) {",
+                  "    pm.collectionVariables.set(\"devCode\", jsonData.devCode);",
+                  "    console.log(\"Saved devCode:\", jsonData.devCode);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "OK (dev mode)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"phone\": \"9876500001\"\n}" },
+                "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"devCode\": \"108399\"\n}"
+            },
+            {
+              "name": "Validation error",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"phone\": \"123\"\n}" },
+                "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Too small: expected string to have >=8 characters\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "2. Verify OTP — User App",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{phone}}\",\n  \"code\": \"{{devCode}}\",\n  \"role\": \"user\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/otp/verify",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "otp", "verify"]
+            },
+            "description": "Verifies the OTP and logs in — creating a new USER account on first-ever verify for this phone number. `role` is only honored on brand-new signups; an existing account always keeps its original role, so this can't be used to escalate a user into a host or vice versa."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) {",
+                  "    pm.collectionVariables.set(\"accessToken\", jsonData.accessToken);",
+                  "    pm.collectionVariables.set(\"refreshToken\", jsonData.refreshToken);",
+                  "    pm.collectionVariables.set(\"userId\", jsonData.user.id);",
+                  "    console.log(\"Logged in as\", jsonData.user.role, jsonData.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "OK — new or existing user",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"phone\": \"9876500001\",\n  \"code\": \"108399\",\n  \"role\": \"user\"\n}" },
+                "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"accessToken\": \"<JWT access token, 15 min expiry>\",\n  \"refreshToken\": \"<opaque refresh token, 30 day expiry, single-use>\",\n  \"user\": {\n    \"id\": \"8e946734-1b08-4956-b4e1-bb96ddea0135\",\n    \"role\": \"user\",\n    \"phone\": \"9876500001\",\n    \"kycStatus\": \"not_submitted\"\n  }\n}"
+            },
+            {
+              "name": "Incorrect code",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"phone\": \"9876500001\",\n  \"code\": \"000000\",\n  \"role\": \"user\"\n}" },
+                "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Incorrect code\"\n}"
+            },
+            {
+              "name": "No active OTP / expired / already used",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"phone\": \"9876500001\",\n  \"code\": \"108399\",\n  \"role\": \"user\"\n}" },
+                "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"error\": \"No active OTP for this phone — request a new one\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "3. Request OTP — Host Phone",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{hostPhone}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/otp/request",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "otp", "request"]
+            },
+            "description": "Same endpoint as step 1, for the separate HOST test phone number."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.devCode) {",
+                  "    pm.collectionVariables.set(\"hostDevCode\", jsonData.devCode);",
+                  "    console.log(\"Saved hostDevCode:\", jsonData.devCode);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "OK (dev mode)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"phone\": \"9876500555\"\n}" },
+                "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"devCode\": \"742013\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "4. Verify OTP — Host App",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{hostPhone}}\",\n  \"code\": \"{{hostDevCode}}\",\n  \"role\": \"host\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/otp/verify",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "otp", "verify"]
+            },
+            "description": "Same endpoint as step 2, with `role: \"host\"` and the separate host phone/code. Creates the user row AND an empty host_profiles row in one step, on first-ever verify for `hostPhone`.\n\nThis becomes your \"current session\" for the rest of the collection (it runs after the USER verify), so the Profile and Hosts folders below exercise the HOST-only endpoints successfully."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) {",
+                  "    pm.collectionVariables.set(\"accessToken\", jsonData.accessToken);",
+                  "    pm.collectionVariables.set(\"refreshToken\", jsonData.refreshToken);",
+                  "    pm.collectionVariables.set(\"userId\", jsonData.user.id);",
+                  "    console.log(\"Logged in as\", jsonData.user.role, jsonData.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "OK — new or existing host",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"phone\": \"9876500555\",\n  \"code\": \"742013\",\n  \"role\": \"host\"\n}" },
+                "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"accessToken\": \"<JWT access token, 15 min expiry>\",\n  \"refreshToken\": \"<opaque refresh token, 30 day expiry, single-use>\",\n  \"user\": {\n    \"id\": \"db8147ca-70a8-4cb7-8c30-cc61e5703f0a\",\n    \"role\": \"host\",\n    \"phone\": \"9876500555\",\n    \"kycStatus\": \"not_submitted\"\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Profile (Me)",
+      "description": "Shared by both apps. `Update Host Profile` is HOST-only (403 for a USER account) — run `Auth — Login` first so your current session is the HOST test account.",
+      "item": [
+        {
+          "name": "Get My Profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["me"]
+            },
+            "description": "Returns the logged-in user's profile. If the account role is HOST, the response also includes a `hostProfile` object; USER accounts get `hostProfile: undefined` (omitted)."
+          },
+          "response": [
+            {
+              "name": "OK — user account",
+              "originalRequest": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] } },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"id\": \"8e946734-1b08-4956-b4e1-bb96ddea0135\",\n  \"role\": \"user\",\n  \"phone\": \"9876500001\",\n  \"name\": null,\n  \"email\": null,\n  \"dob\": null,\n  \"ageVerified\": false,\n  \"kycStatus\": \"not_submitted\",\n  \"status\": \"active\"\n}"
+            },
+            {
+              "name": "Unauthorized — missing/expired token",
+              "originalRequest": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] } },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid or expired access token\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update My Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Jane Doe\",\n  \"email\": \"jane@example.com\",\n  \"dob\": \"2000-01-01\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["me"]
+            },
+            "description": "All fields optional — send only what you want to change. `dob` must be `YYYY-MM-DD`. Note: setting `dob` here does NOT set `ageVerified` — that only happens via KYC review (not yet built)."
+          },
+          "response": [
+            {
+              "name": "OK",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"name\": \"Jane Doe\"\n}" },
+                "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"id\": \"8e946734-1b08-4956-b4e1-bb96ddea0135\",\n  \"role\": \"user\",\n  \"phone\": \"9876500001\",\n  \"name\": \"Jane Doe\",\n  \"email\": \"jane@example.com\",\n  \"dob\": \"2000-01-01\",\n  \"ageVerified\": false,\n  \"kycStatus\": \"not_submitted\",\n  \"kycDocumentUrl\": null,\n  \"status\": \"active\",\n  \"createdAt\": \"2026-08-09T02:00:00.000Z\",\n  \"updatedAt\": \"2026-08-09T02:05:00.000Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Host Profile (Host only)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bio\": \"Hi, I love talking about movies and travel!\",\n  \"gallery\": [\n    \"https://example.com/photo1.jpg\",\n    \"https://example.com/photo2.jpg\"\n  ],\n  \"ratePerMinutePaise\": 3000\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/me/host-profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["me", "host-profile"]
+            },
+            "description": "HOST accounts only — a USER account calling this gets a 403. All fields optional.\n\n`ratePerMinutePaise` is in the smallest currency unit (paise), same convention as the wallet, to avoid floating-point issues. Example: 3000 = ₹30.00/minute."
+          },
+          "response": [
+            {
+              "name": "OK",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"ratePerMinutePaise\": 3000\n}" },
+                "url": { "raw": "{{baseUrl}}/me/host-profile", "host": ["{{baseUrl}}"], "path": ["me", "host-profile"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"userId\": \"db8147ca-70a8-4cb7-8c30-cc61e5703f0a\",\n  \"bio\": \"Hi, I love talking about movies and travel!\",\n  \"gallery\": [\"https://example.com/photo1.jpg\", \"https://example.com/photo2.jpg\"],\n  \"ratePerMinutePaise\": 3000,\n  \"payoutDetails\": null,\n  \"createdAt\": \"2026-08-09T02:03:52.860Z\",\n  \"updatedAt\": \"2026-08-09T02:06:10.120Z\"\n}"
+            },
+            {
+              "name": "Forbidden — not a host account",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"bio\": \"hi\"\n}" },
+                "url": { "raw": "{{baseUrl}}/me/host-profile", "host": ["{{baseUrl}}"], "path": ["me", "host-profile"] }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not allowed for this role\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Submit KYC Document",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentUrl\": \"https://example.com/id-proof.pdf\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/me/kyc",
+              "host": ["{{baseUrl}}"],
+              "path": ["me", "kyc"]
+            },
+            "description": "Records that a KYC document was submitted and moves `kycStatus` to `pending`. An admin will review and approve/reject it later (admin review workflow is Phase 9, not yet built).\n\nCURRENT LIMITATION: this endpoint expects `documentUrl` to already point at an uploaded file — there's no presigned-upload endpoint yet since object storage (S3/R2) credentials aren't configured. Until that lands, the frontend needs some other way to get a URL here for testing (e.g. any publicly reachable file URL works for now, since nothing validates the content, only that it's a well-formed URL)."
+          },
+          "response": [
+            {
+              "name": "OK",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"documentUrl\": \"https://example.com/id-proof.pdf\"\n}" },
+                "url": { "raw": "{{baseUrl}}/me/kyc", "host": ["{{baseUrl}}"], "path": ["me", "kyc"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"kycStatus\": \"pending\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Hosts — Discovery & Presence",
+      "description": "Primarily consumed by the User app (browse/discover) and the Host app (presence toggle). `Toggle My Presence` is HOST-only.",
+      "item": [
+        {
+          "name": "List Hosts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/hosts?onlineOnly=true&sort=rate_asc&page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["hosts"],
+              "query": [
+                { "key": "onlineOnly", "value": "true", "description": "true | false. Omit to show all active hosts regardless of presence." },
+                { "key": "sort", "value": "rate_asc", "description": "One of: rate_asc, rate_desc, online_first. Omit for unsorted." },
+                { "key": "page", "value": "1", "description": "1-indexed. Defaults to 1." },
+                { "key": "pageSize", "value": "20", "description": "Max 50. Defaults to 20." }
+              ]
+            },
+            "description": "Browse hosts available for calls/chat. Excludes suspended/banned host accounts automatically. Any authenticated account (user or host) can call this."
+          },
+          "response": [
+            {
+              "name": "OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{baseUrl}}/hosts?onlineOnly=true&pageSize=50", "host": ["{{baseUrl}}"], "path": ["hosts"], "query": [{ "key": "onlineOnly", "value": "true" }, { "key": "pageSize", "value": "50" }] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"hosts\": [\n    {\n      \"id\": \"db8147ca-70a8-4cb7-8c30-cc61e5703f0a\",\n      \"name\": null,\n      \"bio\": null,\n      \"gallery\": [],\n      \"ratePerMinutePaise\": 2500,\n      \"isOnline\": true\n    }\n  ],\n  \"total\": 1,\n  \"page\": 1,\n  \"pageSize\": 50\n}"
+            }
+          ]
+        },
+        {
+          "name": "Toggle My Presence (Host only)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isOnline\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/me/presence",
+              "host": ["{{baseUrl}}"],
+              "path": ["me", "presence"]
+            },
+            "description": "HOST accounts only. Sets the host's online/offline status, which immediately affects what shows up in `List Hosts` with `onlineOnly=true`.\n\nAlso broadcasts a `presence:update` Socket.io event — `{ hostId, isOnline }` — to every connected socket client. To see this live: connect a Socket.io client to `{{baseUrl}}` with `auth: { token: \"<accessToken>\" }` in the handshake and listen for `presence:update`. Postman's plain HTTP requests can't demonstrate the socket side of this — that part needs to be tested from an actual client (or a small script)."
+          },
+          "response": [
+            {
+              "name": "OK",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"isOnline\": true\n}" },
+                "url": { "raw": "{{baseUrl}}/me/presence", "host": ["{{baseUrl}}"], "path": ["me", "presence"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"isOnline\": true\n}"
+            },
+            {
+              "name": "Forbidden — not a host account",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"isOnline\": true\n}" },
+                "url": { "raw": "{{baseUrl}}/me/presence", "host": ["{{baseUrl}}"], "path": ["me", "presence"] }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not allowed for this role\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Auth — Session",
+      "description": "Refresh and logout, kept last in the collection on purpose: Logout clears your session, so anything after it would 401. Run these once you're done exercising Profile/Hosts.",
+      "item": [
+        {
+          "name": "1. Refresh Access Token",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/token/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "token", "refresh"]
+            },
+            "description": "Exchanges a refresh token for a new access/refresh pair. The presented refresh token is invalidated immediately, even on success — it's single-use (rotation), so calling this twice with the same token will 401 the second time by design."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) {",
+                  "    pm.collectionVariables.set(\"accessToken\", jsonData.accessToken);",
+                  "    pm.collectionVariables.set(\"refreshToken\", jsonData.refreshToken);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "OK — rotated pair",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"<previous refresh token>\"\n}" },
+                "url": { "raw": "{{baseUrl}}/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "token", "refresh"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"accessToken\": \"<new JWT access token>\",\n  \"refreshToken\": \"<new opaque refresh token>\"\n}"
+            },
+            {
+              "name": "Invalid / expired / already-used",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"already-used-or-garbage\"\n}" },
+                "url": { "raw": "{{baseUrl}}/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "token", "refresh"] }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid, expired, or already-used refresh token\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "2. Logout",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "logout"]
+            },
+            "description": "Revokes the given refresh token (requires a valid access token — inherits the collection's Bearer auth). The access token itself stays valid until it naturally expires (max 15 min) — there's no access-token blacklist, only refresh-token revocation."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.collectionVariables.set(\"accessToken\", \"\");",
+                  "pm.collectionVariables.set(\"refreshToken\", \"\");"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "OK",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"<current refresh token>\"\n}" },
+                "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth", "logout"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "cookie": [],
+              "body": "{\n  \"success\": true\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
