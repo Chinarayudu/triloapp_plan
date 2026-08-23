@@ -71,7 +71,8 @@ Postgres is the right call for this domain (relational integrity for the ledger/
 | Concern | Suggested provider(s) | Node integration |
 |---|---|---|
 | Recharge + payouts | Razorpay or Cashfree (high-risk tier — see BACKEND_PLAN.md §3) | Official Node SDK for order/payout creation; raw `express.raw()` body parsing + HMAC verification for webhook routes (never JSON-parse before verifying signature) |
-| Video calls + live broadcast | Agora, 100ms, or ZEGOCLOUD (managed CPaaS — see BACKEND_PLAN.md §4) | Server SDK issues short-lived join tokens per call/broadcast; webhook endpoint for call/recording events |
+| Video calls + live broadcast | **Agora** (decided — see BACKEND_PLAN.md §4; ZEGOCLOUD is the fallback if pricing doesn't work out; Twilio Video is ruled out, sunset by Twilio) | `agora-token` (Node) to mint short-lived join tokens per call/broadcast server-side; webhook endpoint for call/recording events |
+| 1:1 and live chat | **Self-built**, not a vendor product — Socket.io + Postgres (history) + Redis (fan-out), see BACKEND_PLAN.md §4 | n/a — this is our own code, not an SDK integration |
 | Object storage | AWS S3 or Cloudflare R2 (cheaper egress) | `@aws-sdk/client-s3` (R2 is S3-API-compatible, same client) — pre-signed upload URLs for KYC docs/gallery images so large files never transit through Express itself |
 | Push notifications | Firebase Cloud Messaging | `firebase-admin` |
 
@@ -105,7 +106,7 @@ ioredis, bullmq
 socket.io, @socket.io/redis-adapter
 jsonwebtoken, argon2, zod
 helmet, cors, express-rate-limit
-razorpay (or cashfree-pg), agora-access-token (or chosen CPaaS SDK)
+razorpay (or cashfree-pg), agora-token
 @aws-sdk/client-s3, firebase-admin
 pino, pino-http, @sentry/node, prom-client
 vitest, supertest, zod-to-openapi, swagger-ui-express

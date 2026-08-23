@@ -49,20 +49,20 @@ Client-reported time is never trusted — the server is the sole authority on ca
 3. **Low-balance handling**: push a socket warning at a threshold (e.g. 30s of runway left); auto-end gracefully at zero, never mid-tick.
 4. **Reconciliation job**: nightly job sums `LedgerEntry` per wallet and compares to cached balance; alerts on drift instead of silently trusting the cache.
 
-### Gifting & gift-requests
+### Gifting & gift-requests — built (Phase 6)
 
-- Gifts are a catalog (`Gift{name, price, active}`) priced in real currency, managed by admin — same principle as the wallet: the user picks a gift priced in ₹, not in an abstract unit.
-- Sending a gift = same debit(currency)/commission/credit(beans) pattern as billing, tagged `reference_type=GIFT`, works identically whether in a 1:1 call, chat, or live broadcast.
-- "Ask for gift" is just a targeted real-time event (socket + push) from host → user with an optional suggested gift; it doesn't move money itself, it just prompts the user's client to open the gift picker.
+- Gifts are a catalog (`gifts{name, pricePaise, active}`) priced in real currency, managed by admin (no admin UI yet — seeded via `npm run db:seed`) — same principle as the wallet: the user picks a gift priced in ₹, not in an abstract unit.
+- Sending a gift debits the sender and credits the recipient host's beans through `wallet.service.ts`'s `transferUserToHost` — the exact same primitive call billing uses, not a parallel reimplementation. That function was extracted specifically so the debit/commission/credit math can't drift between the two call sites; tagged `reference_type=gift` in the ledger. `context`/`contextId` optionally tag which call/chat/live instance a gift happened during, but nothing enforces that instance must still be active.
+- "Ask for gift" (`POST /gifts/request`, host-only) is just a targeted real-time event (socket + push-notification fallback) to the user with an optional suggested gift; it doesn't move money itself, it just prompts the user's client to open the gift picker.
 
-### Withdrawals
+### Withdrawals — built (Phase 8)
 
-- `WithdrawalRequest{host_id, beans, converted_amount, status}` — `PENDING → APPROVED → PROCESSING → PAID` or `REJECTED`.
-- `converted_amount` is computed via the **withdrawal slab table** active at request time (see `WithdrawalSlab` in §6) — not the same rate used when beans were earned; this is where admin controls the actual payout economics.
-- Require KYC-verified payout details before a request can be created.
-- Minimum withdrawal amount + frequency cap (e.g. once/week) to control payout processing cost and fraud exposure.
-- Auto-approve under an admin-set threshold, manual queue above it.
-- Actual payout via the payment gateway's payout/transfer API — don't hand-roll bank transfers.
+- `withdrawal_requests{host_id, beans, paise_per_bean_snapshot, converted_amount_paise, status, payout_details_snapshot, payout_txn_id, failure_reason}` — `PENDING → APPROVED → PROCESSING → PAID`, or `→ REJECTED` (from pending) / `→ FAILED` (from processing).
+- `converted_amount_paise` is computed via the **withdrawal slab table** (`withdrawal_slabs`, tiered by bean range) active at request time — a different rate than the one used when beans were earned; this is where admin controls the actual payout economics. `withdrawal_policy_configs` holds the minimum amount, frequency cap, and auto-approve threshold as one admin-tunable snapshot (BR-EARN-04/05).
+- Requires the host's KYC to be `approved` and `host_profiles.payout_details` (UPI or bank, `PATCH /me/payout-details`) to be set before a request can be created (BR-EARN-03).
+- Beans are debited at request time (not at final payout) — this is what prevents the same beans from being withdrawn twice while a request is in flight — and reversed on `REJECTED` or `FAILED` (BR-EARN-06).
+- Auto-approve under the admin-set threshold (`converted_amount_paise <= autoApproveThresholdPaise`), manual queue (`PENDING`) above it.
+- **Not yet real**: the actual gateway Payout/Transfer API call and its webhook. Razorpay payout credentials aren't verified (same blocker as recharge, §2/§3) — `src/lib/payout.ts` dev-stubs the gateway call the same way `src/lib/otpSender.ts` dev-stubs SMS (loud failure in production, logged in dev/test). `POST /withdrawals/:id/dev-resolve-payout` stands in for the missing webhook, and `POST /withdrawals/:id/dev-admin-decision` stands in for the Phase 9 admin approval queue that doesn't exist yet — both are non-prod-only escape hatches, same pattern as `POST /wallet/dev-credit` and `POST /me/kyc/dev-approve`.
 
 ---
 
@@ -112,24 +112,29 @@ I'll assume **India-first (Razorpay/Cashfree high-risk tier)** unless you tell m
 
 ## 4. Real-time infra: calls, live broadcast, chat, presence
 
-### Video/audio calls (1:1)
-- Build vs buy is the key call here:
-  - **Managed CPaaS** (Agora, ZEGOCLOUD, 100ms, Twilio Video) — much faster to launch, they handle SFU scaling/TURN/recording/global edge, cost is per-minute usage. Recommended for MVP given everything else (payments, moderation, admin) is already a lot of surface area.
-  - **Self-hosted SFU** (LiveKit OSS, mediasoup) + coturn for TURN — cheaper at real scale, but you own scaling, recording pipeline, and global reach. Revisit once call-minute volume justifies the ops cost.
-- Either way, your backend owns **signaling and business logic**, not media: call state machine (`REQUESTED → RINGING → ACCEPTED → ONGOING → COMPLETED/REJECTED/MISSED/FAILED`), ringing/timeout, billing hooks on connect/disconnect events from the video SDK's server callbacks.
+### Video/audio calls (1:1) — decided: Agora
 
-### Live broadcasting (one host → many viewers)
-- Needs a many-to-one fan-out, not P2P: RTMP ingest → HLS/LL-HLS distribution, or the live-streaming mode of whichever CPaaS you pick for calls (most offer both 1:1 and live/broadcast products under one SDK — worth keeping both on the same vendor to avoid double integration work).
-- Backend tracks `LiveBroadcast` (status, start/end, peak viewers) and `LiveViewer` (join/leave), and reuses the exact same gifting pipeline for in-broadcast gifts.
-- Live chat is a separate high-throughput fan-out channel (Redis pub/sub or the video vendor's built-in chat) — needs rate-limiting/spam control since it's public.
+- **Managed CPaaS, not self-hosted**: building/operating an SFU + TURN fleet ourselves is a large distinct engineering problem that isn't worth taking on before the rest of the platform (payments, moderation, admin) even exists. Revisit self-hosting (LiveKit OSS, mediasoup + coturn) only once call-minute volume makes the per-minute vendor cost a real line item.
+- **Agora** is the pick: it's the CPaaS most commonly used for this exact app category (per-minute cam calls + live streaming + gifting), bundles the 1:1 call product and the live-broadcast product under one SDK (no double integration), and has the deepest track record at this kind of scale.
+  - **Fallback**: ZEGOCLOUD — explicitly targets this social/live-streaming/dating niche and tends to be cheaper at volume, smaller track record. Worth a pricing comparison once real call-minute volume estimates exist, but not worth blocking on now.
+  - **Ruled out**: Twilio Video — Twilio sunset its Programmable Video product, so it's not a viable option regardless of fit.
+- Our backend owns **signaling and business logic**, not media: call state machine (`REQUESTED → RINGING → ACCEPTED → ONGOING → COMPLETED/REJECTED/MISSED/FAILED`), ringing/timeout, billing hooks on connect/disconnect events from Agora's server-side callbacks/webhooks. Agora's server SDK issues short-lived join tokens per call; the backend never touches raw media.
+
+### Live broadcasting (one host → many viewers) — built (Phase 7)
+- Same vendor as calls (Agora) — the host's join token is `PUBLISHER` role, a viewer's is `SUBSCRIBER` (read-only), both minted by `generateAgoraToken`'s now-parameterized role — one CPaaS integration, not a separate vendor, and viewers can't accidentally publish.
+- Backend tracks `live_broadcasts` (status, peak viewer count) and `live_viewers` (join/leave — `leftAt IS NULL` is what "currently watching" and the concurrent-viewer count actually mean, not a separate counter that could drift), and reuses `gifts.routes.ts`'s existing send-gift pipeline unmodified for in-broadcast gifts (`context: "live"`) — the only addition was also fanning the resulting `gift:received` event out to every viewer in the broadcast room, not just the host.
+- Live chat fan-out is **self-built** over a Socket.io room (`live-<broadcastId>`), not the vendor's bundled chat product — consistent with 1:1 chat and under our own moderation/admin visibility. It is deliberately **not persisted** (unlike 1:1 chat) — BR-LIVE-02 only requires current visibility, not retrievable history; revisit if moderation/replay needs it later. Room membership is driven server-side from the join/leave REST endpoints (`Socket.io socketsJoin/socketsLeave` on the caller's already-connected socket), not by the client managing its own room state — one source of truth (`live_viewers`), not two systems that could disagree about who's actually watching.
+- Redis pub/sub (mentioned in earlier drafts of this doc) turned out unnecessary for a single instance — Socket.io rooms already do this fan-out natively; Redis only becomes necessary via `socket.io-redis-adapter` once there's more than one server instance, same "in-memory now, swap later" story as presence and call scheduling.
 
 ### Presence
 - Redis-backed online/available/busy/offline state per host, pushed to user app via WebSocket/pub-sub so the host list updates live without polling.
 - Host list API: filter by available, sort by rating/price/recently-online, paginate.
 
-### Chat (1:1)
-- Persisted message history (Postgres is fine at this scale; move to a dedicated store only if volume demands it), delivered live over WebSocket, push notification when recipient is offline.
-- Decide up front whether messages are free or charged — affects the schema (needs a billing hook per message if metered, same currency-debit/bean-credit pattern as calls and gifts).
+### Chat (1:1) — built (Phase 5): self-built, not a third-party service
+- Persisted message history in Postgres (`chat_conversations` + `chat_messages`), delivered live over Socket.io via the same per-user-room mechanism calls/presence already use, push notification when recipient has no live connection.
+- Deliberately not routed through Agora Chat or another vendor messaging product — 1:1 chat is where gift-requests are triggered and where moderation/reports originate, so keeping it in our own DB keeps that fully under our control rather than split across systems.
+- Free by default (open decision #3 resolved this way for now) — a per-message billing hook would reuse the same currency-debit/bean-credit pattern as calls and gifts if the business wants it metered later.
+- Push notifications are stubbed (dev-mode logging) pending FCM credentials — same pattern as the OTP/Agora/S3 stubs elsewhere in this doc.
 
 ---
 
@@ -195,7 +200,7 @@ Note the `_snapshot` fields on `CallSession` — rates, commission %, and the be
 ## Open decisions before implementation starts
 
 1. Target region/currency (affects payment gateway choice) — assuming India-first unless told otherwise.
-2. Managed CPaaS vs self-hosted video (Agora/100ms/ZEGOCLOUD vs LiveKit/mediasoup) — recommend managed for MVP.
-3. Is 1:1 chat free or charged per-message?
+2. ~~Managed CPaaS vs self-hosted video~~ — **decided: Agora** for both 1:1 calls and live broadcasting (§4); ZEGOCLOUD as fallback if pricing doesn't work out. Chat (1:1 and live) is self-built, not vendor-provided.
+3. ~~Is 1:1 chat free or charged per-message?~~ — **decided (default): free.** Built free-by-default in Phase 5 since it wasn't resolved in time to block the build; revisit if the business wants it metered. Per-message billing would reuse the exact wallet-debit pattern already used for calls (`wallet.service.ts`), not a new mechanism.
 4. Withdrawal cadence/minimum and auto-approval threshold for hosts.
 5. Who owns legal/payment-gateway approval for the adult-content angle — this can gate the whole payments build.
