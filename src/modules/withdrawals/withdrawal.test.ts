@@ -3,7 +3,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../../app";
 import { env } from "../../config/env";
-import { fundUserWallet, registerAndLogin } from "../../test/helpers";
+import { fundUserWallet, registerAndLogin, registerAndLoginAdmin } from "../../test/helpers";
 
 // Same "test against the real dependency" philosophy as kyc.test.ts — KYC
 // approval is a real precondition for a withdrawal (BR-EARN-03), so it's
@@ -11,9 +11,14 @@ import { fundUserWallet, registerAndLogin } from "../../test/helpers";
 const s3 = new S3Client({
   region: env.AWS_REGION,
   credentials: { accessKeyId: env.AWS_ACCESS_KEY_ID!, secretAccessKey: env.AWS_SECRET_ACCESS_KEY! },
+  ...(env.AWS_S3_ENDPOINT ? { endpoint: env.AWS_S3_ENDPOINT, forcePathStyle: true } : {}),
 });
 
-async function approveHostKyc(app: ReturnType<typeof createApp>, hostAccessToken: string): Promise<string> {
+async function approveHostKyc(
+  app: ReturnType<typeof createApp>,
+  hostAccessToken: string,
+  hostUserId: string,
+): Promise<string> {
   const uploadUrlRes = await request(app)
     .post("/me/kyc/upload-url")
     .set("Authorization", `Bearer ${hostAccessToken}`)
@@ -23,8 +28,16 @@ async function approveHostKyc(app: ReturnType<typeof createApp>, hostAccessToken
     headers: { "Content-Type": "application/pdf" },
     body: "fake kyc document for withdrawal tests",
   });
-  await request(app).post("/me/kyc").set("Authorization", `Bearer ${hostAccessToken}`).send({ key: uploadUrlRes.body.key });
-  const approveRes = await request(app).post("/me/kyc/dev-approve").set("Authorization", `Bearer ${hostAccessToken}`);
+  await request(app)
+    .post("/me/kyc")
+    .set("Authorization", `Bearer ${hostAccessToken}`)
+    .send({ documents: [{ documentType: "id_front", key: uploadUrlRes.body.key }] });
+
+  const admin = await registerAndLoginAdmin();
+  const approveRes = await request(app)
+    .post(`/admin/kyc/${hostUserId}/decision`)
+    .set("Authorization", `Bearer ${admin.accessToken}`)
+    .send({ decision: "approve" });
   expect(approveRes.status).toBe(200);
   expect(approveRes.body.kycStatus).toBe("approved");
   return uploadUrlRes.body.key as string;
@@ -85,7 +98,7 @@ describe("Withdrawals", () => {
   it("rejects a withdrawal request when no payout details are on file", async () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
-    cleanupKeys.push(await approveHostKyc(app, host.accessToken));
+    cleanupKeys.push(await approveHostKyc(app, host.accessToken, host.user.id));
 
     const res = await request(app).post("/withdrawals").set("Authorization", `Bearer ${host.accessToken}`).send({ beans: 5000 });
     expect(res.status).toBe(403);
@@ -94,7 +107,7 @@ describe("Withdrawals", () => {
   it("rejects a withdrawal below the minimum amount", async () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
-    cleanupKeys.push(await approveHostKyc(app, host.accessToken));
+    cleanupKeys.push(await approveHostKyc(app, host.accessToken, host.user.id));
     await setPayoutDetails(app, host.accessToken);
     await fundHostBeans(app, host.accessToken, host.user.id, 100);
 
@@ -114,7 +127,7 @@ describe("Withdrawals", () => {
   it("auto-approves and initiates payout for a request under the threshold, debiting beans immediately", async () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
-    cleanupKeys.push(await approveHostKyc(app, host.accessToken));
+    cleanupKeys.push(await approveHostKyc(app, host.accessToken, host.user.id));
     await setPayoutDetails(app, host.accessToken);
     const beanBalance = await fundHostBeans(app, host.accessToken, host.user.id, 6000);
 
@@ -131,10 +144,10 @@ describe("Withdrawals", () => {
     expect(walletRes.body.beanBalance).toBe(beanBalance - 6000);
   });
 
-  it("queues a request above the auto-approve threshold for manual approval, then processes it via dev-admin-decision", async () => {
+  it("queues a request above the auto-approve threshold for manual approval, then processes it via the admin decision endpoint", async () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
-    cleanupKeys.push(await approveHostKyc(app, host.accessToken));
+    cleanupKeys.push(await approveHostKyc(app, host.accessToken, host.user.id));
     await setPayoutDetails(app, host.accessToken);
     // 50,001 beans crosses into the 2-paise/bean tier -> ₹1000.02, above
     // the ₹1000 auto-approve threshold.
@@ -148,9 +161,10 @@ describe("Withdrawals", () => {
     expect(created.body.status).toBe("pending");
     expect(created.body.convertedAmountPaise).toBe(100002);
 
+    const admin = await registerAndLoginAdmin("sub_admin", ["finance"]);
     const approved = await request(app)
-      .post(`/withdrawals/${created.body.id}/dev-admin-decision`)
-      .set("Authorization", `Bearer ${host.accessToken}`)
+      .post(`/admin/withdrawals/${created.body.id}/decision`)
+      .set("Authorization", `Bearer ${admin.accessToken}`)
       .send({ decision: "approve" });
     expect(approved.status).toBe(200);
     expect(approved.body.status).toBe("processing");
@@ -160,7 +174,7 @@ describe("Withdrawals", () => {
   it("reverses beans when a pending request is rejected", async () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
-    cleanupKeys.push(await approveHostKyc(app, host.accessToken));
+    cleanupKeys.push(await approveHostKyc(app, host.accessToken, host.user.id));
     await setPayoutDetails(app, host.accessToken);
     const beanBalance = await fundHostBeans(app, host.accessToken, host.user.id, 50001);
 
@@ -169,9 +183,10 @@ describe("Withdrawals", () => {
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ beans: 50001 });
 
+    const admin = await registerAndLoginAdmin();
     const rejected = await request(app)
-      .post(`/withdrawals/${created.body.id}/dev-admin-decision`)
-      .set("Authorization", `Bearer ${host.accessToken}`)
+      .post(`/admin/withdrawals/${created.body.id}/decision`)
+      .set("Authorization", `Bearer ${admin.accessToken}`)
       .send({ decision: "reject" });
     expect(rejected.status).toBe(200);
     expect(rejected.body.status).toBe("rejected");
@@ -183,7 +198,7 @@ describe("Withdrawals", () => {
   it("finalizes a processing payout as paid via dev-resolve-payout", async () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
-    cleanupKeys.push(await approveHostKyc(app, host.accessToken));
+    cleanupKeys.push(await approveHostKyc(app, host.accessToken, host.user.id));
     await setPayoutDetails(app, host.accessToken);
     await fundHostBeans(app, host.accessToken, host.user.id, 6000);
 
@@ -204,7 +219,7 @@ describe("Withdrawals", () => {
   it("reverses beans when a processing payout fails (BR-EARN-06)", async () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
-    cleanupKeys.push(await approveHostKyc(app, host.accessToken));
+    cleanupKeys.push(await approveHostKyc(app, host.accessToken, host.user.id));
     await setPayoutDetails(app, host.accessToken);
     const beanBalance = await fundHostBeans(app, host.accessToken, host.user.id, 6000);
 
@@ -228,7 +243,7 @@ describe("Withdrawals", () => {
   it("enforces the withdrawal frequency cap", async () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
-    cleanupKeys.push(await approveHostKyc(app, host.accessToken));
+    cleanupKeys.push(await approveHostKyc(app, host.accessToken, host.user.id));
     await setPayoutDetails(app, host.accessToken);
     await fundHostBeans(app, host.accessToken, host.user.id, 12000);
 
@@ -243,7 +258,7 @@ describe("Withdrawals", () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
     const otherHost = await registerAndLogin(app, "host");
-    cleanupKeys.push(await approveHostKyc(app, host.accessToken));
+    cleanupKeys.push(await approveHostKyc(app, host.accessToken, host.user.id));
     await setPayoutDetails(app, host.accessToken);
     await fundHostBeans(app, host.accessToken, host.user.id, 6000);
 
@@ -287,5 +302,43 @@ describe("Payout details", () => {
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ type: "upi", vpa: "user@upi" });
     expect(res.status).toBe(403);
+  });
+});
+
+describe("Withdrawal admin detail — verification checklist (admin design follow-up)", () => {
+  it("shows every check passing for a legitimately-queued request, and reflects an open report", async () => {
+    const app = createApp();
+    const host = await registerAndLogin(app, "host");
+    await approveHostKyc(app, host.accessToken, host.user.id);
+    await setPayoutDetails(app, host.accessToken);
+    await fundHostBeans(app, host.accessToken, host.user.id, 50001); // above the auto-approve threshold — stays pending
+
+    const created = await request(app)
+      .post("/withdrawals")
+      .set("Authorization", `Bearer ${host.accessToken}`)
+      .send({ beans: 50001 });
+    expect(created.body.status).toBe("pending");
+
+    const admin = await registerAndLoginAdmin();
+    const detail = await request(app)
+      .get(`/admin/withdrawals/${created.body.id}`)
+      .set("Authorization", `Bearer ${admin.accessToken}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.host.id).toBe(host.user.id);
+    expect(detail.body.verification.kycApproved).toBe(true);
+    expect(detail.body.verification.payoutDetailsOnFile).toBe(true);
+    expect(detail.body.verification.aboveMinimumAmount).toBe(true);
+    expect(detail.body.verification.noOpenModerationReports).toBe(true);
+
+    const reporter = await registerAndLogin(app, "user");
+    await request(app)
+      .post("/moderation/reports")
+      .set("Authorization", `Bearer ${reporter.accessToken}`)
+      .send({ targetType: "host", targetId: host.user.id, reason: "Suspicious activity" });
+
+    const detailAfterReport = await request(app)
+      .get(`/admin/withdrawals/${created.body.id}`)
+      .set("Authorization", `Bearer ${admin.accessToken}`);
+    expect(detailAfterReport.body.verification.noOpenModerationReports).toBe(false);
   });
 });

@@ -4,7 +4,10 @@ import { db } from "../../db/client";
 import { callBillingTicks, calls } from "../../db/schema";
 import { generateAgoraToken } from "../../lib/agoraToken";
 import { AppError } from "../../lib/errors";
-import { emitToUser } from "../../realtime/socket";
+import { logger } from "../../lib/logger";
+import { sendPushNotification } from "../../lib/push";
+import { emitToUser, isUserConnected } from "../../realtime/socket";
+import { checkCallCollusion } from "../moderation/fraud.service";
 import { getHostProfile, getUserById } from "../users/users.service";
 import {
   getCurrentCommissionBasisPoints,
@@ -33,6 +36,18 @@ const MIN_BUFFER_MINUTES = 1;
 
 type CallRow = typeof calls.$inferSelect;
 const ACTIVE_STATUSES: CallRow["status"][] = ["ringing", "ongoing"];
+
+// Run wherever a call actually reaches "completed" (below, and
+// callReaper.ts's stale-ongoing sweep) — never lets a fraud-signal query
+// fail the call-ending flow it's riding along on, same reasoning as the
+// try/catch around auth.routes.ts's multi-accounting check.
+export async function checkCollusionSafely(hostId: string, userId: string): Promise<void> {
+  try {
+    await checkCallCollusion(hostId, userId);
+  } catch (err) {
+    logger.error({ err, hostId, userId }, "Call collusion check failed");
+  }
+}
 
 export async function getCallById(callId: string): Promise<CallRow | undefined> {
   const [call] = await db.select().from(calls).where(eq(calls.id, callId)).limit(1);
@@ -83,7 +98,7 @@ export async function initiateCall(
     throw new AppError(402, "Insufficient balance to start a call");
   }
 
-  const commissionBasisPointsSnapshot = await getCurrentCommissionBasisPoints();
+  const commissionBasisPointsSnapshot = await getCurrentCommissionBasisPoints(hostId); // BR-COM-03: host override wins if active
   const paisePerBeanSnapshot = await getCurrentPaisePerBean();
 
   const [call] = await db
@@ -105,6 +120,13 @@ export async function initiateCall(
     userId,
     ratePerMinutePaise: call.ratePerMinutePaiseSnapshot,
   });
+  // "Online" (presence.store.ts) means the host toggled availability, not
+  // that their socket is live right now (BR-NOTIF-01) — a host who went
+  // online and then backgrounded/closed the app needs the ring to reach
+  // them some other way, same fallback pattern as chat/gift-request.
+  if (!(await isUserConnected(hostId))) {
+    void sendPushNotification(hostId, "Incoming call", "You have an incoming call");
+  }
 
   const channelName = channelNameFor(call.id);
   return { call, channelName, agoraToken: generateAgoraToken(channelName, userId) };
@@ -176,6 +198,7 @@ export async function endCall(callId: string, requesterId: string): Promise<Call
       .set({ status: "completed", endedAt: new Date(), endReason, updatedAt: new Date() })
       .where(eq(calls.id, callId))
       .returning();
+    await checkCollusionSafely(call.hostId, call.userId);
   }
 
   const summary = { callId, status: updated.status, totalAmountPaise: updated.totalAmountPaise, totalBeans: updated.totalBeans };
@@ -207,6 +230,7 @@ async function endCallForInsufficientBalance(call: CallRow): Promise<void> {
     .set({ status: "completed", endedAt: new Date(), endReason: "insufficient_balance", updatedAt: new Date() })
     .where(eq(calls.id, call.id))
     .returning();
+  await checkCollusionSafely(call.hostId, call.userId);
 
   const summary = {
     callId: call.id,
@@ -300,6 +324,13 @@ async function runBillingTickInner(callId: string): Promise<{ billed: boolean }>
 
   if (userBalanceAfter < tickCost) {
     emitToUser(call.userId, "call:low-balance-warning", { callId, remainingPaise: userBalanceAfter });
+    // A user mid-call is almost always socket-connected, but a native
+    // VoIP-style call UI on mobile can keep the call's media running while
+    // the app (and its socket) is backgrounded — same fallback reasoning
+    // as the other BR-NOTIF-01 triggers.
+    if (!(await isUserConnected(call.userId))) {
+      void sendPushNotification(call.userId, "Low balance", "Your balance is running low — recharge to keep this call going");
+    }
   }
 
   return { billed: true };

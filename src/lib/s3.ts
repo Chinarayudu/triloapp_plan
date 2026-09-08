@@ -10,6 +10,10 @@ const s3Client = s3Configured
   ? new S3Client({
       region: env.AWS_REGION,
       credentials: { accessKeyId: env.AWS_ACCESS_KEY_ID!, secretAccessKey: env.AWS_SECRET_ACCESS_KEY! },
+      // MinIO (CI/local dev) needs both: a fixed endpoint instead of
+      // resolving *.amazonaws.com, and path-style addressing since it
+      // doesn't do virtual-hosted-style (bucket.endpoint) by default.
+      ...(env.AWS_S3_ENDPOINT ? { endpoint: env.AWS_S3_ENDPOINT, forcePathStyle: true } : {}),
     })
   : undefined;
 

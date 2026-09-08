@@ -50,6 +50,48 @@
       "when": 1787519876809,
       "tag": "0006_spooky_gressill",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787521790815,
+      "tag": "0007_living_slipstream",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787549965206,
+      "tag": "0008_glorious_triathlon",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787556277680,
+      "tag": "0009_fantastic_puppet_master",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788327359387,
+      "tag": "0010_overrated_blue_blade",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788329522217,
+      "tag": "0011_closed_edwin_jarvis",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788329542362,
+      "tag": "0012_chief_human_torch",
+      "breakpoints": true
     }
   ]
 }

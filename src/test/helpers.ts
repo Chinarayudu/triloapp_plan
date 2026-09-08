@@ -1,5 +1,9 @@
 import { Express } from "express";
 import request from "supertest";
+import { db } from "../db/client";
+import { users } from "../db/schema";
+import { issueTokenPair } from "../modules/auth/token.service";
+import { AdminPermission } from "../modules/admin/permissions";
 
 export function randomPhone(): string {
   // E.164 — required by the /auth/otp endpoints. NODE_ENV=test always
@@ -28,4 +32,18 @@ export async function fundUserWallet(app: Express, accessToken: string, amountPa
     .set("Authorization", `Bearer ${accessToken}`)
     .send({ amountPaise });
   return res.body.balancePaise as number;
+}
+
+// Admin/sub-admin accounts have no signup flow by design (db/seedAdmin.ts's
+// comment explains why) — this inserts the row directly, the same shortcut
+// a real deploy takes via `npm run db:seed-admin`, then issues tokens the
+// same way auth.routes.ts's otp/verify does.
+export async function registerAndLoginAdmin(
+  role: "admin" | "sub_admin" = "admin",
+  permissions: AdminPermission[] = [],
+) {
+  const phone = randomPhone();
+  const [user] = await db.insert(users).values({ phone, role, permissions }).returning();
+  const tokens = await issueTokenPair(user.id, role);
+  return { ...tokens, user };
 }

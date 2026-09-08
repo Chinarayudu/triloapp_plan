@@ -4,7 +4,7 @@ import { env } from "../../config/env";
 import { AppError } from "../../lib/errors";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
-import { devAdminDecision, devResolvePayout, getWithdrawalById, listWithdrawalsForHost, requestWithdrawal } from "./withdrawal.service";
+import { devResolvePayout, getWithdrawalById, listWithdrawalsForHost, requestWithdrawal } from "./withdrawal.service";
 
 export const withdrawalsRouter = Router();
 
@@ -55,27 +55,6 @@ withdrawalsRouter.get("/withdrawals/:id", requireAuth, requireRole("host"), asyn
     next(err);
   }
 });
-
-const adminDecisionSchema = z.object({ decision: z.enum(["approve", "reject"]) });
-
-// Stands in for the Phase 9 admin withdrawal-approval queue (no admin
-// auth/panel exists yet to gate this behind) — same non-prod-only escape
-// hatch as wallet.routes.ts's POST /wallet/dev-credit.
-withdrawalsRouter.post(
-  "/withdrawals/:id/dev-admin-decision",
-  requireAuth,
-  validateBody(adminDecisionSchema),
-  async (req, res, next) => {
-    try {
-      if (env.NODE_ENV === "production") throw new AppError(403, "Disabled in production");
-      const { decision } = req.body as z.infer<typeof adminDecisionSchema>;
-      const request = await devAdminDecision(parseWithdrawalId(req.params.id), decision);
-      res.json(request);
-    } catch (err) {
-      next(err);
-    }
-  },
-);
 
 const resolvePayoutSchema = z.object({ outcome: z.enum(["paid", "failed"]), reason: z.string().max(500).optional() });
 

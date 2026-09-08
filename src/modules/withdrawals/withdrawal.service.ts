@@ -1,11 +1,33 @@
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, count, desc, eq, gte, lte } from "drizzle-orm";
 import { db } from "../../db/client";
-import { hostProfiles, users, withdrawalPolicyConfigs, withdrawalRequests, withdrawalSlabs } from "../../db/schema";
+import {
+  hostProfiles,
+  moderationReports,
+  users,
+  withdrawalPolicyConfigs,
+  withdrawalRequests,
+  withdrawalSlabs,
+} from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { initiatePayout } from "../../lib/payout";
+import { sendPushNotification } from "../../lib/push";
+import { emitToUser, isUserConnected } from "../../realtime/socket";
 import { creditHostBeans, debitHostBeans } from "../wallet/wallet.service";
 
 type WithdrawalRequest = typeof withdrawalRequests.$inferSelect;
+
+// BR-NOTIF-01 "withdrawal status change" — a status change reachable
+// after the host's own create-request response already told them the
+// immediate outcome (pending vs. auto-approved), so this covers what
+// happens *after* that: an admin decision, or the payout gateway
+// resolving. Real-time first, push only as the offline fallback, same
+// pattern as every other notification trigger in this codebase.
+async function notifyWithdrawalStatus(request: WithdrawalRequest): Promise<void> {
+  emitToUser(request.hostId, "withdrawal:status", { withdrawalId: request.id, status: request.status });
+  if (!(await isUserConnected(request.hostId))) {
+    void sendPushNotification(request.hostId, "Withdrawal update", `Your withdrawal is now ${request.status}`);
+  }
+}
 
 export async function getActiveWithdrawalPolicy() {
   const [row] = await db
@@ -37,9 +59,57 @@ export async function listWithdrawalsForHost(hostId: string): Promise<Withdrawal
   return db.select().from(withdrawalRequests).where(eq(withdrawalRequests.hostId, hostId)).orderBy(desc(withdrawalRequests.createdAt));
 }
 
+// Admin queue (admin.routes.ts, BR-ADM-05) — status omitted lists everything,
+// newest first; "pending" is the actual approval queue.
+export async function listWithdrawalsByStatus(status?: WithdrawalRequest["status"]): Promise<WithdrawalRequest[]> {
+  if (status) {
+    return db
+      .select()
+      .from(withdrawalRequests)
+      .where(eq(withdrawalRequests.status, status))
+      .orderBy(desc(withdrawalRequests.createdAt));
+  }
+  return db.select().from(withdrawalRequests).orderBy(desc(withdrawalRequests.createdAt));
+}
+
 export async function getWithdrawalById(id: string): Promise<WithdrawalRequest | undefined> {
   const [row] = await db.select().from(withdrawalRequests).where(eq(withdrawalRequests.id, id)).limit(1);
   return row;
+}
+
+// The admin review screen's checklist (admin design follow-up) — these are
+// exactly the same gates requestWithdrawal already enforced at request
+// time, recomputed here for the admin's benefit since a host's KYC/reports
+// could plausibly have changed in the time a request sat in the queue.
+export async function getWithdrawalDetailForAdmin(id: string) {
+  const request = await getWithdrawalById(id);
+  if (!request) throw new AppError(404, "Withdrawal request not found");
+
+  const [host] = await db.select().from(users).where(eq(users.id, request.hostId)).limit(1);
+  const [hostProfile] = await db.select().from(hostProfiles).where(eq(hostProfiles.userId, request.hostId)).limit(1);
+  const policy = await getActiveWithdrawalPolicy();
+
+  const [{ value: openReportCount }] = await db
+    .select({ value: count() })
+    .from(moderationReports)
+    .where(
+      and(
+        eq(moderationReports.targetId, request.hostId),
+        eq(moderationReports.targetType, "host"),
+        eq(moderationReports.status, "pending"),
+      ),
+    );
+
+  return {
+    ...request,
+    host: host ? { id: host.id, phone: host.phone, email: host.email, name: host.name } : null,
+    verification: {
+      kycApproved: host?.kycStatus === "approved",
+      payoutDetailsOnFile: Boolean(hostProfile?.payoutDetails),
+      aboveMinimumAmount: request.convertedAmountPaise >= policy.minAmountPaise,
+      noOpenModerationReports: openReportCount === 0,
+    },
+  };
 }
 
 export async function requestWithdrawal(hostId: string, beans: number): Promise<WithdrawalRequest> {
@@ -110,20 +180,22 @@ async function initiatePayoutForRequest(request: WithdrawalRequest): Promise<Wit
     .set({ status: "processing", payoutTxnId, updatedAt: new Date() })
     .where(eq(withdrawalRequests.id, request.id))
     .returning();
+  await notifyWithdrawalStatus(updated);
   return updated;
 }
 
-// Stands in for the Phase 9 admin withdrawal-approval queue (BR-EARN-05,
-// BR-ADM-05) — there is no admin auth/panel yet to gate this behind, so
-// it's a dev-only escape hatch like wallet.routes.ts's POST /wallet/
-// dev-credit, hard-blocked in production by the route handler.
-export async function devAdminDecision(id: string, decision: "approve" | "reject"): Promise<WithdrawalRequest> {
+// The admin withdrawal-approval queue decision (BR-EARN-05, BR-ADM-05) —
+// called from admin.routes.ts, which also writes the audit log entry
+// (BR-ADM-04) after this resolves; that logging lives at the route layer
+// rather than here so this function stays a plain state-transition
+// primitive, same as initiatePayoutForRequest below.
+export async function decideWithdrawal(id: string, decision: "approve" | "reject"): Promise<WithdrawalRequest> {
   const request = await getWithdrawalById(id);
   if (!request) throw new AppError(404, "Withdrawal request not found");
   if (request.status !== "pending") throw new AppError(409, `Request is ${request.status}, not pending`);
 
   if (decision === "reject") {
-    return db.transaction(async (tx) => {
+    const rejected = await db.transaction(async (tx) => {
       await creditHostBeans(tx, request.hostId, request.beans, "withdrawal", request.id, `withdrawal:${request.id}:reject-reversal`);
       const [updated] = await tx
         .update(withdrawalRequests)
@@ -132,6 +204,8 @@ export async function devAdminDecision(id: string, decision: "approve" | "reject
         .returning();
       return updated;
     });
+    await notifyWithdrawalStatus(rejected);
+    return rejected;
   }
 
   const [approved] = await db
@@ -155,7 +229,7 @@ export async function devResolvePayout(
   if (request.status !== "processing") throw new AppError(409, `Request is ${request.status}, not processing`);
 
   if (outcome === "failed") {
-    return db.transaction(async (tx) => {
+    const failed = await db.transaction(async (tx) => {
       await creditHostBeans(tx, request.hostId, request.beans, "withdrawal", request.id, `withdrawal:${request.id}:failure-reversal`);
       const [updated] = await tx
         .update(withdrawalRequests)
@@ -164,6 +238,8 @@ export async function devResolvePayout(
         .returning();
       return updated;
     });
+    await notifyWithdrawalStatus(failed);
+    return failed;
   }
 
   const [updated] = await db
@@ -171,5 +247,6 @@ export async function devResolvePayout(
     .set({ status: "paid", updatedAt: new Date() })
     .where(eq(withdrawalRequests.id, id))
     .returning();
+  await notifyWithdrawalStatus(updated);
   return updated;
 }

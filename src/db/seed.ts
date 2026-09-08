@@ -1,5 +1,5 @@
 import { db, pool } from "./client";
-import { beansEarnConfigs, commissionConfigs, gifts, withdrawalPolicyConfigs, withdrawalSlabs } from "./schema";
+import { adultModeConfigs, beansEarnConfigs, commissionConfigs, gifts, withdrawalPolicyConfigs, withdrawalSlabs } from "./schema";
 
 // Idempotent: only inserts if the table is empty, so this is safe to run
 // on every deploy rather than needing a "has this run before" tracker.
@@ -58,6 +58,14 @@ async function seed(): Promise<void> {
     console.log("Seeded withdrawal slabs: 1 paise/bean under 50k, 2 paise/bean at 50k+");
   } else {
     console.log("Withdrawal slabs already present, skipping");
+  }
+
+  const existingAdultMode = await db.select().from(adultModeConfigs).limit(1);
+  if (existingAdultMode.length === 0) {
+    await db.insert(adultModeConfigs).values({ enabled: false });
+    console.log("Seeded adult mode config: disabled");
+  } else {
+    console.log("Adult mode config already present, skipping");
   }
 
   await pool.end();

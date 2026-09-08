@@ -3,6 +3,7 @@ import { z } from "zod";
 import { AppError } from "../../lib/errors";
 import { sendPushNotification } from "../../lib/push";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { perUserRateLimit } from "../../middleware/rateLimit";
 import { validateBody } from "../../middleware/validate";
 import { emitToRoom, emitToUser, isUserConnected } from "../../realtime/socket";
 import { getUserById } from "../users/users.service";
@@ -10,6 +11,10 @@ import { liveRoomName } from "../live/live.service";
 import { listActiveGifts, sendGift } from "./gifts.service";
 
 export const giftsRouter = Router();
+
+// Bounds gift-send spam (BACKEND_PLAN.md §8 "Rate limiting", Phase 11) —
+// generous relative to any real gifting session.
+const sendGiftLimiter = perUserRateLimit(60_000, 30);
 
 giftsRouter.get("/gifts", requireAuth, async (_req, res, next) => {
   try {
@@ -27,35 +32,45 @@ const sendGiftSchema = z.object({
   contextId: z.string().uuid().optional(),
 });
 
-giftsRouter.post("/gifts/send", requireAuth, requireRole("user"), validateBody(sendGiftSchema), async (req, res, next) => {
-  try {
-    const { recipientId, giftId, context, contextId } = req.body as z.infer<typeof sendGiftSchema>;
-    const result = await sendGift(req.user!.sub, recipientId, giftId, context, contextId);
+giftsRouter.post(
+  "/gifts/send",
+  requireAuth,
+  requireRole("user"),
+  sendGiftLimiter,
+  validateBody(sendGiftSchema),
+  async (req, res, next) => {
+    try {
+      const { recipientId, giftId, context, contextId } = req.body as z.infer<typeof sendGiftSchema>;
+      const result = await sendGift(req.user!.sub, recipientId, giftId, context, contextId);
 
-    const giftReceivedPayload = {
-      giftTransactionId: result.id,
-      senderId: req.user!.sub,
-      gift: { id: result.gift.id, name: result.gift.name, iconUrl: result.gift.iconUrl },
-      beansCredited: result.beansCredited,
-    };
-    emitToUser(recipientId, "gift:received", giftReceivedPayload);
+      const giftReceivedPayload = {
+        giftTransactionId: result.id,
+        senderId: req.user!.sub,
+        gift: { id: result.gift.id, name: result.gift.name, iconUrl: result.gift.iconUrl },
+        beansCredited: result.beansCredited,
+      };
+      emitToUser(recipientId, "gift:received", giftReceivedPayload);
+      if (!(await isUserConnected(recipientId))) {
+        void sendPushNotification(recipientId, "Gift received", `You received a ${result.gift.name}!`);
+      }
 
-    // Live gifts are meant to be seen by everyone watching, not just the
-    // host — the same event, additionally fanned out to the broadcast
-    // room (BACKEND_PLAN.md §4: "reuses the exact same gifting pipeline").
-    if (context === "live" && contextId) {
-      emitToRoom(liveRoomName(contextId), "gift:received", giftReceivedPayload);
+      // Live gifts are meant to be seen by everyone watching, not just the
+      // host — the same event, additionally fanned out to the broadcast
+      // room (BACKEND_PLAN.md §4: "reuses the exact same gifting pipeline").
+      if (context === "live" && contextId) {
+        emitToRoom(liveRoomName(contextId), "gift:received", giftReceivedPayload);
+      }
+
+      res.status(201).json({
+        giftTransactionId: result.id,
+        gift: { id: result.gift.id, name: result.gift.name, pricePaise: result.gift.pricePaise },
+        beansCredited: result.beansCredited,
+      });
+    } catch (err) {
+      next(err);
     }
-
-    res.status(201).json({
-      giftTransactionId: result.id,
-      gift: { id: result.gift.id, name: result.gift.name, pricePaise: result.gift.pricePaise },
-      beansCredited: result.beansCredited,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
+  },
+);
 
 const requestGiftSchema = z.object({
   userId: z.string().uuid(),

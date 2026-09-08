@@ -2,13 +2,14 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
-import { env } from "../../config/env";
 import { db } from "../../db/client";
 import { hostProfiles, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
-import { generateDownloadUrl, generateUploadUrl } from "../../lib/s3";
+import { generateUploadUrl } from "../../lib/s3";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
+import { addGalleryItem, deleteOwnGalleryItem, listGalleryItems } from "../hosts/gallery.service";
+import { createSubmission, getLatestSubmission, getSubmissionDocuments } from "./kyc.service";
 import { getHostProfile, getUserById } from "./users.service";
 
 export const usersRouter = Router();
@@ -83,6 +84,50 @@ usersRouter.patch(
   },
 );
 
+// Structured gallery items (media type + video duration) — admin design
+// follow-up, separate from PATCH /me/host-profile's bulk `gallery` string
+// array above (untouched, still works) so admin can view/delete one item
+// at a time (admin.routes.ts's GET/DELETE /admin/hosts/:id/gallery).
+const addGalleryItemSchema = z.object({
+  mediaType: z.enum(["photo", "video"]),
+  url: z.string().url(),
+  durationSeconds: z.number().int().positive().optional(),
+});
+
+usersRouter.post(
+  "/me/host-profile/gallery",
+  requireAuth,
+  requireRole("host"),
+  validateBody(addGalleryItemSchema),
+  async (req, res, next) => {
+    try {
+      const { mediaType, url, durationSeconds } = req.body as z.infer<typeof addGalleryItemSchema>;
+      res.status(201).json(await addGalleryItem(req.user!.sub, mediaType, url, durationSeconds));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+usersRouter.get("/me/host-profile/gallery", requireAuth, requireRole("host"), async (req, res, next) => {
+  try {
+    res.json({ items: await listGalleryItems(req.user!.sub) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+usersRouter.delete("/me/host-profile/gallery/:itemId", requireAuth, requireRole("host"), async (req, res, next) => {
+  try {
+    const itemId = z.string().uuid().safeParse(req.params.itemId);
+    if (!itemId.success) throw new AppError(400, "Invalid gallery item id");
+    await deleteOwnGalleryItem(req.user!.sub, itemId.data);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // KYC documents live in a private S3 bucket (no public access) — the
 // three-step flow below is: get a presigned PUT URL, upload directly to
 // S3 from the client, then tell us the resulting key so we can record the
@@ -110,24 +155,39 @@ usersRouter.post("/me/kyc/upload-url", requireAuth, validateBody(uploadUrlSchema
   }
 });
 
-// The key must belong to the caller (kyc/{their own user id}/...) — without
-// this check, one account could submit KYC using a document key it never
-// actually uploaded, just by guessing/copying another user's key.
-const kycSchema = z.object({ key: z.string().min(1) });
+// Every key must belong to the caller (kyc/{their own user id}/...) —
+// without this check, one account could submit KYC using a document key it
+// never actually uploaded, just by guessing/copying another user's key.
+// 1-4 documents, each a distinct type (front/back/selfie/address proof) —
+// a real submission history now, not a single overwritten column; see
+// kyc.service.ts's createSubmission.
+const kycSchema = z.object({
+  documents: z
+    .array(
+      z.object({
+        documentType: z.enum(["id_front", "id_back", "selfie", "address_proof"]),
+        key: z.string().min(1),
+      }),
+    )
+    .min(1)
+    .max(4)
+    .refine(
+      (docs) => new Set(docs.map((d) => d.documentType)).size === docs.length,
+      "Each document type can only be submitted once per attempt",
+    ),
+});
 
 usersRouter.post("/me/kyc", requireAuth, validateBody(kycSchema), async (req, res, next) => {
   try {
-    const { key } = req.body as z.infer<typeof kycSchema>;
-    if (!key.startsWith(`kyc/${req.user!.sub}/`)) {
-      throw new AppError(403, "This document key does not belong to your account");
+    const { documents } = req.body as z.infer<typeof kycSchema>;
+    for (const doc of documents) {
+      if (!doc.key.startsWith(`kyc/${req.user!.sub}/`)) {
+        throw new AppError(403, "This document key does not belong to your account");
+      }
     }
 
-    const [updated] = await db
-      .update(users)
-      .set({ kycDocumentKey: key, kycStatus: "pending", updatedAt: new Date() })
-      .where(eq(users.id, req.user!.sub))
-      .returning();
-    res.json({ kycStatus: updated.kycStatus });
+    const submission = await createSubmission(req.user!.sub, documents);
+    res.json({ submissionId: submission.id, attemptNumber: submission.attemptNumber, kycStatus: submission.status });
   } catch (err) {
     next(err);
   }
@@ -138,33 +198,14 @@ usersRouter.get("/me/kyc", requireAuth, async (req, res, next) => {
     const user = await getUserById(req.user!.sub);
     if (!user) throw new AppError(404, "User not found");
 
-    const documentViewUrl = user.kycDocumentKey ? await generateDownloadUrl(user.kycDocumentKey) : null;
-    res.json({ kycStatus: user.kycStatus, documentViewUrl });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Stands in for the Phase 9 admin KYC-approval queue — there is no admin
-// auth/panel yet to gate real approval behind, so this is a dev-only
-// escape hatch (hard-blocked in production) that lets withdrawal's
-// KYC-gate (BR-EARN-03) be built and tested for real in the meantime, the
-// same way wallet.routes.ts's POST /wallet/dev-credit stands in for a
-// payment gateway.
-usersRouter.post("/me/kyc/dev-approve", requireAuth, async (req, res, next) => {
-  try {
-    if (env.NODE_ENV === "production") throw new AppError(403, "Disabled in production");
-
-    const user = await getUserById(req.user!.sub);
-    if (!user) throw new AppError(404, "User not found");
-    if (!user.kycDocumentKey) throw new AppError(400, "Submit a KYC document first");
-
-    const [updated] = await db
-      .update(users)
-      .set({ kycStatus: "approved", updatedAt: new Date() })
-      .where(eq(users.id, req.user!.sub))
-      .returning();
-    res.json({ kycStatus: updated.kycStatus });
+    const submission = await getLatestSubmission(req.user!.sub);
+    const documents = submission ? await getSubmissionDocuments(submission.id) : [];
+    res.json({
+      kycStatus: user.kycStatus,
+      attemptNumber: submission?.attemptNumber ?? null,
+      rejectionReason: submission?.rejectionReason ?? null,
+      documents,
+    });
   } catch (err) {
     next(err);
   }

@@ -9,6 +9,13 @@ export async function findUserByPhone(phone: string) {
   return user;
 }
 
+// Admin/sub-admin login only (email+password, Phase 9 follow-up) — Users
+// and Hosts never look themselves up by email, only phone.
+export async function findUserByEmail(email: string) {
+  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  return user;
+}
+
 export async function getUserById(id: string) {
   const [user] = await db.select().from(users).where(eq(users.id, id)).limit(1);
   return user;

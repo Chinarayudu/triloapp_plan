@@ -74,3 +74,16 @@ export async function leaveUserFromRoom(userId: string, room: string): Promise<v
 export function emitToRoom(room: string, event: string, payload: unknown): void {
   io?.to(room).emit(event, payload);
 }
+
+// Called when admin suspends/bans an account (BR-ACC-05: "in-progress
+// sessions terminated, not just blocked from new logins") — forces every
+// live connection for this user to drop immediately, on top of revoking
+// their refresh tokens (token.service.ts) so they can't silently reconnect
+// with a fresh pair. The already-issued access token (up to 15m TTL) still
+// works for plain REST calls until it expires; there is no cheaper way to
+// invalidate that without a per-request DB check on every route.
+export async function disconnectUser(userId: string): Promise<void> {
+  if (!io) return;
+  const sockets = await io.in(`user:${userId}`).fetchSockets();
+  for (const socket of sockets) socket.disconnect(true);
+}

@@ -1,7 +1,7 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../app";
-import { registerAndLogin } from "../../test/helpers";
+import { registerAndLogin, registerAndLoginAdmin } from "../../test/helpers";
 
 describe("Live broadcasting: lifecycle", () => {
   it("starts a broadcast and lists it with a live viewer count", async () => {
@@ -143,5 +143,32 @@ describe("Live broadcasting: chat authorization", () => {
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ content: "hello?" });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("Live broadcasting: admin monitoring (admin design follow-up)", () => {
+  it("lists currently-live broadcasts with host identity and viewer count, and can force-end one", async () => {
+    const app = createApp();
+    const host = await registerAndLogin(app, "host");
+    const viewer = await registerAndLogin(app, "user");
+    const start = await request(app).post("/live/broadcasts").set("Authorization", `Bearer ${host.accessToken}`);
+    await request(app).post(`/live/broadcasts/${start.body.broadcastId}/join`).set("Authorization", `Bearer ${viewer.accessToken}`);
+
+    const admin = await registerAndLoginAdmin();
+    const list = await request(app).get("/admin/live-broadcasts").set("Authorization", `Bearer ${admin.accessToken}`);
+    expect(list.status).toBe(200);
+    const listed = list.body.broadcasts.find((b: { id: string }) => b.id === start.body.broadcastId);
+    expect(listed).toBeTruthy();
+    expect(listed.host.id).toBe(host.user.id);
+    expect(listed.viewerCount).toBe(1);
+
+    const forceEnd = await request(app)
+      .post(`/admin/live-broadcasts/${start.body.broadcastId}/end`)
+      .set("Authorization", `Bearer ${admin.accessToken}`);
+    expect(forceEnd.status).toBe(200);
+    expect(forceEnd.body.status).toBe("ended");
+
+    const listAfter = await request(app).get("/admin/live-broadcasts").set("Authorization", `Bearer ${admin.accessToken}`);
+    expect(listAfter.body.broadcasts.find((b: { id: string }) => b.id === start.body.broadcastId)).toBeUndefined();
   });
 });

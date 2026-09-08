@@ -31,6 +31,7 @@ describe("Calls: happy path with full billing reconciliation", () => {
       .send({ hostId: host.user.id });
     expect(initiate.status).toBe(201);
     expect(initiate.body.status).toBe("ringing");
+    expect(initiate.body.secureMode).toBe(true); // BR-MOD-03 — always true for 1:1 calls
     const callId = initiate.body.callId as string;
 
     const accept = await request(app)

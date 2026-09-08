@@ -15,6 +15,13 @@ const envSchema = z.object({
   // deterministically via direct calls instead — see vitest.config.ts.
   CALL_SCHEDULER_INTERVAL_MS: z.coerce.number().int().positive().default(10_000),
   CALL_RINGING_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  // Phase 11 background sweeps — same "ops knob, real timers overridden to
+  // effectively-never in tests" convention as the two above. Both are
+  // idempotent and directly callable outside their interval (admin.routes.ts's
+  // GET /admin/reconciliation, and tests calling reapStaleCalls directly),
+  // so the interval only controls how often the *unattended* sweep runs.
+  CALL_REAPER_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+  WALLET_RECONCILIATION_INTERVAL_MS: z.coerce.number().int().positive().default(60 * 60_000),
   // Optional as a group — otpSender.ts falls back to dev-mode logging when
   // any of these is missing. All three or none; there's no valid
   // partially-configured state.
@@ -43,6 +50,10 @@ const envSchema = z.object({
   AWS_SECRET_ACCESS_KEY: z.string().optional(),
   AWS_REGION: z.string().optional(),
   AWS_S3_BUCKET_NAME: z.string().optional(),
+  // Optional override for an S3-compatible endpoint (MinIO in CI/local
+  // dev — see .github/workflows/ci.yml) — omit entirely to talk to real
+  // AWS. Never set in production.
+  AWS_S3_ENDPOINT: z.string().optional(),
   // Optional as a group, same convention — agoraToken.ts falls back to a
   // clearly-fake stub token when these are missing rather than failing,
   // since call flows still need to be buildable/testable without a real

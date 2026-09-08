@@ -9,9 +9,10 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
-// Full role set per BRD.md BR-ACC-01, even though this phase only ever
-// creates USER/HOST rows — ADMIN/SUB_ADMIN accounts are provisioned
-// separately in the Phase 9 admin build, not through OTP signup.
+// Full role set per BRD.md BR-ACC-01, even though signup (auth.routes.ts)
+// only ever creates USER/HOST rows — ADMIN/SUB_ADMIN accounts are
+// provisioned out-of-band via `npm run db:seed-admin` (Phase 9), then
+// authenticate through the same phone/OTP flow as everyone else.
 export const roleEnum = pgEnum("role", ["user", "host", "admin", "sub_admin"]);
 export const kycStatusEnum = pgEnum("kyc_status", [
   "not_submitted",
@@ -20,6 +21,12 @@ export const kycStatusEnum = pgEnum("kyc_status", [
   "rejected",
 ]);
 export const accountStatusEnum = pgEnum("account_status", ["active", "suspended", "banned"]);
+// Restricted permission sets for SUB_ADMIN accounts (BR-ADM-03) — a full
+// ADMIN implicitly has all of these (checked in admin/permissions.ts) and
+// never needs this column populated. "finance" covers withdrawal approval
+// and pricing/economics config; "moderation" covers KYC review, content
+// reports, and account suspension; "analytics" is read-only dashboard access.
+export const adminPermissionEnum = pgEnum("admin_permission", ["finance", "moderation", "analytics"]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -29,13 +36,19 @@ export const users = pgTable("users", {
   email: text("email"),
   dob: text("dob"), // ISO date string; verified DOB comes from KYC review (Phase 9), not this field alone
   ageVerified: boolean("age_verified").notNull().default(false),
+  // Denormalized mirror of the latest row in kycSubmissions (below) — kept
+  // on the user row because almost every KYC-gate check in the codebase
+  // (withdrawals, live 18+ gating, admin decisions) only cares about "what
+  // is this user's KYC status right now," not their submission history.
   kycStatus: kycStatusEnum("kyc_status").notNull().default("not_submitted"),
-  // A private S3 object key, not a URL — the bucket blocks all public
-  // access, so viewing this requires generating a short-lived presigned
-  // GET URL on demand (see users.routes.ts's GET /me/kyc), not storing
-  // one directly (it would go stale).
-  kycDocumentKey: text("kyc_document_key"),
   status: accountStatusEnum("status").notNull().default("active"),
+  // Admin/sub-admin login only (Phase 9 follow-up — email+password,
+  // matching the admin web app's design; Users/Hosts still authenticate
+  // via phone/OTP only, BR-ACC-02). NULL for every other role.
+  passwordHash: text("password_hash"),
+  // Only meaningful for role=sub_admin (admin/permissions.ts) — empty for
+  // every other role.
+  permissions: adminPermissionEnum("permissions").array().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -56,6 +69,89 @@ export const hostProfiles = pgTable("host_profiles", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// A host's public photo/video gallery, structured (media type + video
+// duration) rather than hostProfiles.gallery's bare URL strings — needed so
+// admin can view/moderate individual items (delete one video without
+// touching the rest). hostProfiles.gallery is untouched/still used by the
+// existing PATCH /me/host-profile bulk-set; this is the new, separate way
+// forward (POST /me/host-profile/gallery adds one item at a time).
+export const galleryMediaTypeEnum = pgEnum("gallery_media_type", ["photo", "video"]);
+
+export const hostGalleryItems = pgTable("host_gallery_items", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  hostId: uuid("host_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  mediaType: galleryMediaTypeEnum("media_type").notNull(),
+  url: text("url").notNull(),
+  durationSeconds: integer("duration_seconds"), // only meaningful for mediaType=video
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// KYC submissions (BR-ACC-03/04) — admin design follow-up. Previously a
+// single kycDocumentKey column on users, overwritten on every resubmission
+// with no history and no way to show "which attempt is this" or review
+// more than one document. Now a real submission history: one row per
+// attempt, each with 1-4 documents (front/back/selfie/address proof).
+// users.kycStatus mirrors whichever submission is latest.
+// ---------------------------------------------------------------------------
+
+export const kycSubmissionStatusEnum = pgEnum("kyc_submission_status", ["pending", "approved", "rejected"]);
+export const kycDocumentTypeEnum = pgEnum("kyc_document_type", [
+  "id_front",
+  "id_back",
+  "selfie",
+  "address_proof",
+]);
+
+export const kycSubmissions = pgTable("kyc_submissions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  // 1st, 2nd, 3rd submission for this user — computed at insert time as
+  // (their previous submission count + 1), not a DB sequence, since it's
+  // scoped per-user, not global.
+  attemptNumber: integer("attempt_number").notNull(),
+  status: kycSubmissionStatusEnum("status").notNull().default("pending"),
+  reviewedByAdminId: uuid("reviewed_by_admin_id").references(() => users.id),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  rejectionReason: text("rejection_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const kycDocuments = pgTable("kyc_documents", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  submissionId: uuid("submission_id")
+    .notNull()
+    .references(() => kycSubmissions.id, { onDelete: "cascade" }),
+  documentType: kycDocumentTypeEnum("document_type").notNull(),
+  // Private S3 object key, same "presign a GET URL on demand, don't store
+  // one" convention as the column this replaced.
+  objectKey: text("object_key").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// A USER following a HOST (BR-NOTIF-01's "a followed/favorite host going
+// live") — nothing more than that trigger consumes this today, kept as its
+// own small table rather than folded into hostProfiles since it's a
+// many-to-many relationship, not profile data.
+export const hostFollows = pgTable(
+  "host_follows",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    hostId: uuid("host_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique().on(table.userId, table.hostId)],
+);
+
 export const otpCodes = pgTable("otp_codes", {
   id: uuid("id").primaryKey().defaultRandom(),
   phone: text("phone").notNull(),
@@ -73,6 +169,24 @@ export const refreshTokens = pgTable("refresh_tokens", {
   tokenHash: text("token_hash").notNull().unique(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// One row per successful login (BACKEND_PLAN.md §8 "Fraud" — Phase 11).
+// Deliberately a standing history, not derived from refreshTokens: a
+// refresh token gets rotated/revoked constantly (that's its whole job),
+// which would make fraud analysis over "who logged in from what device"
+// lossy if it were the only record. deviceFingerprint is optional and
+// frontend-supplied (there's no way to force a client to send one) — the
+// multi-accounting check in fraud.service.ts simply skips accounts that
+// never send it, same "configure/react, can't force" posture as the
+// screenshot-capture flag in Phase 10.
+export const loginEvents = pgTable("login_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  deviceFingerprint: text("device_fingerprint"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -136,14 +250,23 @@ export const ledgerEntries = pgTable("ledger_entries", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// Admin-tunable levers (BACKEND_PLAN.md §5). No admin UI exists yet
-// (Phase 9) — these are read via wallet.service.ts and seeded with a
-// default row by `npm run db:seed`. A call snapshots the currently-active
-// row onto itself at creation time, so a later config change never
-// retroactively alters an in-flight or completed call (BR-COM-02).
+// Admin-tunable levers (BACKEND_PLAN.md §5), managed via admin.routes.ts
+// (Phase 9) and seeded with a default row by `npm run db:seed`. Read via
+// wallet.service.ts. Never updated in place — admin changes insert a new
+// row with a later effectiveFrom, and the "currently active" row is
+// whichever one has the latest effectiveFrom that isn't in the future.
+// A call snapshots the currently-active row onto itself at creation time,
+// so a later admin change never retroactively alters an in-flight or
+// completed call (BR-COM-02).
+// hostId NULL = a global rate; non-NULL = a negotiated override for that
+// one host (BR-COM-03 — "per individual host, e.g. for negotiated rates
+// with top earners"). getCurrentCommissionBasisPoints (wallet.service.ts)
+// prefers an active host-specific row over the global one; every other
+// host with no override of their own just falls through to global.
 export const commissionConfigs = pgTable("commission_configs", {
   id: uuid("id").primaryKey().defaultRandom(),
   basisPoints: integer("basis_points").notNull(), // out of 10000 — e.g. 2000 = 20%
+  hostId: uuid("host_id").references(() => users.id),
   effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -151,6 +274,18 @@ export const commissionConfigs = pgTable("commission_configs", {
 export const beansEarnConfigs = pgTable("beans_earn_configs", {
   id: uuid("id").primaryKey().defaultRandom(),
   paisePerBean: integer("paise_per_bean").notNull(), // e.g. 1 = beans track net paise 1:1 at credit time
+  effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// The global 18+ toggle (BACKEND_PLAN.md §5, BR-MOD-01) — same versioned
+// "latest effectiveFrom wins" pattern as the two configs above. Gates
+// whether a HOST is allowed to mark a broadcast `isAdultContent` (see
+// liveBroadcasts below) at all; it does not retroactively degrade a
+// broadcast already marked adult if later flipped off (Phase 10, admin.service.ts).
+export const adultModeConfigs = pgTable("adult_mode_configs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  enabled: boolean("enabled").notNull(),
   effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -307,6 +442,13 @@ export const liveBroadcasts = pgTable("live_broadcasts", {
     .references(() => users.id),
   status: liveBroadcastStatusEnum("status").notNull().default("live"),
   peakViewerCount: integer("peak_viewer_count").notNull().default(0),
+  // BR-MOD-01/02 (Phase 10) — set at start time only, requires
+  // adultModeConfigs' global toggle to currently be on and the host to be
+  // age-verified (live.service.ts's startBroadcast). Once set, stays true
+  // for the life of the broadcast even if the global toggle is later
+  // flipped off — a later admin change never retroactively re-opens
+  // already-gated content to unverified viewers.
+  isAdultContent: boolean("is_adult_content").notNull().default(false),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   endedAt: timestamp("ended_at", { withTimezone: true }),
 });
@@ -337,7 +479,7 @@ export const liveViewers = pgTable("live_viewers", {
 // ---------------------------------------------------------------------------
 
 export const withdrawalStatusEnum = pgEnum("withdrawal_status", [
-  "pending", // above auto-approve threshold, awaiting manual admin approval (Phase 9)
+  "pending", // above auto-approve threshold, awaiting manual admin approval (admin.routes.ts)
   "approved", // approved (auto or manual), payout not yet initiated
   "processing", // payout initiated at the gateway, outcome not yet confirmed
   "paid",
@@ -391,4 +533,99 @@ export const withdrawalRequests = pgTable("withdrawal_requests", {
   failureReason: text("failure_reason"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// Admin panel (BACKEND_PLAN.md §6/§8, BRD.md BR-ADM-*, BR-MOD-04/05) — Phase 9.
+// ---------------------------------------------------------------------------
+
+// A report a User/Host files against another account or a piece of content
+// (BR-MOD-04) — targetId is polymorphic (points into users/chat_messages/
+// calls/live_broadcasts depending on targetType), same convention as
+// giftTransactions.contextId, so no FK constraint here.
+export const moderationTargetTypeEnum = pgEnum("moderation_target_type", [
+  "user",
+  "host",
+  "chat_message",
+  "call",
+  "live_broadcast",
+]);
+export const moderationStatusEnum = pgEnum("moderation_status", ["pending", "resolved", "dismissed"]);
+
+export const moderationReports = pgTable("moderation_reports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  reporterId: uuid("reporter_id")
+    .notNull()
+    .references(() => users.id),
+  targetType: moderationTargetTypeEnum("target_type").notNull(),
+  targetId: uuid("target_id").notNull(),
+  reason: text("reason").notNull(),
+  status: moderationStatusEnum("status").notNull().default("pending"),
+  resolvedByAdminId: uuid("resolved_by_admin_id").references(() => users.id),
+  resolutionNote: text("resolution_note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+});
+
+// Every privileged action that changes money-affecting config or account
+// status is logged here (BR-ADM-04) — who, what, when, on what. metadata is
+// a JSON string of whatever's useful to review later (e.g. the new
+// basisPoints, a rejection reason); kept free-form rather than one column
+// per possible action, since the set of admin actions will keep growing.
+export const auditLogs = pgTable("audit_logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  adminId: uuid("admin_id")
+    .notNull()
+    .references(() => users.id),
+  action: text("action").notNull(),
+  targetType: text("target_type").notNull(),
+  targetId: uuid("target_id"),
+  metadata: text("metadata"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// Screenshot/recording capture events (BACKEND_PLAN.md §5, BR-MOD-03) —
+// Phase 10. The actual blocking is client-side (Android FLAG_SECURE, iOS
+// capture-change detection); the backend's job is only to log a reported
+// capture attempt and escalate for human review after enough of them
+// (moderation.service.ts's logCaptureEvent) — never to auto-ban on this
+// alone, since capture detection can false-positive.
+// ---------------------------------------------------------------------------
+
+export const captureEventContextEnum = pgEnum("capture_event_context", ["call", "chat", "live"]);
+
+export const captureEvents = pgTable("capture_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  context: captureEventContextEnum("context").notNull(),
+  // Polymorphic (calls.id / chat_conversations.id / live_broadcasts.id
+  // depending on context), same convention as moderationReports.targetId —
+  // optional since the client may not always have a specific session id at
+  // hand when it detects the capture.
+  contextId: uuid("context_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// Broadcast messaging (admin design follow-up) — a titled message an admin
+// sends to every User, every Host, or both at once (platform announcements,
+// scheduled-maintenance notices). Delivered the same way every other
+// notification in this codebase is: a socket event now, a push fallback
+// for whoever isn't currently connected — see admin.routes.ts.
+// ---------------------------------------------------------------------------
+
+export const broadcastRecipientsEnum = pgEnum("broadcast_recipients", ["all_users", "all_hosts", "all"]);
+
+export const broadcastMessages = pgTable("broadcast_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  recipients: broadcastRecipientsEnum("recipients").notNull(),
+  sentByAdminId: uuid("sent_by_admin_id")
+    .notNull()
+    .references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

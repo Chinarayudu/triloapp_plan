@@ -34,7 +34,9 @@ export async function sendGift(
 
   // Same snapshot-at-time-of-transaction reasoning as calls (BR-COM-02) —
   // a later admin config change shouldn't rewrite a gift already sent.
-  const commissionBasisPointsSnapshot = await getCurrentCommissionBasisPoints();
+  // recipientId (the host) is passed so a per-host override (BR-COM-03)
+  // applies here too, same as calls.
+  const commissionBasisPointsSnapshot = await getCurrentCommissionBasisPoints(recipientId);
   const paisePerBeanSnapshot = await getCurrentPaisePerBean();
   const price = gift.pricePaise;
   const commissionAmount = Math.floor((price * commissionBasisPointsSnapshot) / 10_000);

@@ -1,6 +1,9 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../app";
+import { db } from "../../db/client";
+import { users } from "../../db/schema";
+import { hashPassword } from "../../lib/password";
 import { randomPhone, registerAndLogin } from "../../test/helpers";
 
 describe("Auth: OTP + JWT flow", () => {
@@ -69,6 +72,48 @@ describe("Auth: OTP + JWT flow", () => {
   it("rejects requests without a valid access token", async () => {
     const app = createApp();
     const res = await request(app).get("/me");
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("Auth: admin email+password login (Phase 9 follow-up)", () => {
+  it("logs an admin in via email+password, and never reveals whether the email exists on failure", async () => {
+    const app = createApp();
+    const email = `admin-${randomPhone().slice(1)}@example.com`; // unique per run, same as randomPhone's uniqueness
+
+    const created = await request(app)
+      .post("/auth/admin/login")
+      .send({ email, password: "wrong-password-first" });
+    expect(created.status).toBe(401); // no such account yet — same generic error as a real one with a wrong password
+
+    // Provisioned the same way db:seedAdmin.ts does — direct DB insert with
+    // a hashed password, not through any signup endpoint (none exists).
+    await db.insert(users).values({
+      phone: randomPhone(),
+      email,
+      role: "admin",
+      passwordHash: await hashPassword("correct-horse-battery-staple"),
+    });
+
+    const wrongPassword = await request(app).post("/auth/admin/login").send({ email, password: "nope" });
+    expect(wrongPassword.status).toBe(401);
+    expect(wrongPassword.body.error).toBe(created.body.error); // identical error either way
+
+    const ok = await request(app).post("/auth/admin/login").send({ email, password: "correct-horse-battery-staple" });
+    expect(ok.status).toBe(200);
+    expect(ok.body.user.role).toBe("admin");
+    expect(ok.body.accessToken).toBeTruthy();
+  });
+
+  it("rejects a User/Host account even with a matching email — this endpoint is admin/sub-admin only", async () => {
+    const app = createApp();
+    const { accessToken } = await registerAndLogin(app, "user");
+    const email = `user-${randomPhone().slice(1)}@example.com`;
+    await request(app).patch("/me").set("Authorization", `Bearer ${accessToken}`).send({ email });
+
+    // This account has no passwordHash at all (Users/Hosts never get one),
+    // so any password is rejected the same generic way.
+    const res = await request(app).post("/auth/admin/login").send({ email, password: "anything" });
     expect(res.status).toBe(401);
   });
 });

@@ -1,4 +1,4 @@
-import { desc, eq, lte } from "drizzle-orm";
+import { and, desc, eq, isNull, lte } from "drizzle-orm";
 import { db } from "../../db/client";
 import { beansEarnConfigs, commissionConfigs, hostWallets, ledgerEntries, wallets } from "../../db/schema";
 import { AppError } from "../../lib/errors";
@@ -20,15 +20,29 @@ export type LedgerReferenceType =
   | "adjustment"
   | "dev_credit";
 
-export async function getCurrentCommissionBasisPoints(): Promise<number> {
-  const [row] = await db
+// hostId is optional — when given, an active host-specific override
+// (BR-COM-03) wins over the global rate; every host with no negotiated
+// rate of their own just falls through to global, same as before this
+// parameter existed.
+export async function getCurrentCommissionBasisPoints(hostId?: string): Promise<number> {
+  if (hostId) {
+    const [hostRow] = await db
+      .select()
+      .from(commissionConfigs)
+      .where(and(eq(commissionConfigs.hostId, hostId), lte(commissionConfigs.effectiveFrom, new Date())))
+      .orderBy(desc(commissionConfigs.effectiveFrom))
+      .limit(1);
+    if (hostRow) return hostRow.basisPoints;
+  }
+
+  const [globalRow] = await db
     .select()
     .from(commissionConfigs)
-    .where(lte(commissionConfigs.effectiveFrom, new Date()))
+    .where(and(isNull(commissionConfigs.hostId), lte(commissionConfigs.effectiveFrom, new Date())))
     .orderBy(desc(commissionConfigs.effectiveFrom))
     .limit(1);
-  if (!row) throw new Error("No commission config seeded — run `npm run db:seed`");
-  return row.basisPoints;
+  if (!globalRow) throw new Error("No commission config seeded — run `npm run db:seed`");
+  return globalRow.basisPoints;
 }
 
 export async function getCurrentPaisePerBean(): Promise<number> {

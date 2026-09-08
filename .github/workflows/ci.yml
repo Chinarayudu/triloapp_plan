@@ -21,8 +21,38 @@ jobs:
 
       - run: npm run typecheck
 
+      # Stands in for real AWS S3 so kyc.test.ts/withdrawal.test.ts's real
+      # upload/download round trip can actually run here, not just locally
+      # (src/lib/s3.ts's AWS_S3_ENDPOINT override). Run as a plain step
+      # rather than a `services:` container — GitHub Actions' services
+      # schema has no way to pass the `server /data` argument the official
+      # minio/minio image's entrypoint requires, so `docker run` directly
+      # is the reliable option, not a third-party "runs by default" image
+      # whose tags can (and have) disappeared out from under a workflow.
+      - name: Start MinIO (S3-compatible, for KYC upload tests)
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioci -e MINIO_ROOT_PASSWORD=minioci123 \
+            minio/minio:latest server /data
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 2
+          done
+          curl -sf -X PUT http://localhost:9000/triloplan-ci-bucket \
+            -u minioci:minioci123 --aws-sigv4 "aws:amz:us-east-1:s3"
+
       - run: npm test
         env:
           NODE_ENV: test
           PORT: 4000
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # JWT_SECRET was missing entirely before — env.ts requires it
+          # with no default, so this job could never actually boot the
+          # app to run any test. Fixed as part of the MinIO change since
+          # both were needed to get this workflow genuinely running.
+          JWT_SECRET: ci-only-test-secret-not-used-anywhere-real-00
+          AWS_ACCESS_KEY_ID: minioci
+          AWS_SECRET_ACCESS_KEY: minioci123
+          AWS_REGION: us-east-1
+          AWS_S3_BUCKET_NAME: triloplan-ci-bucket
+          AWS_S3_ENDPOINT: http://localhost:9000

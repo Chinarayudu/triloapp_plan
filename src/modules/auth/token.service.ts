@@ -63,3 +63,14 @@ export async function revokeRefreshToken(presentedToken: string, userId: string)
     .set({ revokedAt: new Date() })
     .where(and(eq(refreshTokens.tokenHash, tokenHash), eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
 }
+
+// Used by admin.service.ts on suspend/ban (BR-ACC-05) — revokes every
+// still-valid refresh token for this user at once, not just the one
+// presented at logout, so the account can't be kept alive by refreshing
+// from a different device/session.
+export async function revokeAllRefreshTokensForUser(userId: string): Promise<void> {
+  await db
+    .update(refreshTokens)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
+}

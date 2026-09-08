@@ -19,6 +19,11 @@ export default defineConfig({
       // the per-tick billing amount, a business constant, not a knob.
       CALL_SCHEDULER_INTERVAL_MS: "600000",
       CALL_RINGING_TIMEOUT_MS: "600000",
+      // Same reasoning — the reaper/reconciliation sweeps aren't started by
+      // any test (server.ts's setup, not app.ts's), but keep these out to
+      // effectively-never anyway in case that ever changes.
+      CALL_REAPER_INTERVAL_MS: "600000",
+      WALLET_RECONCILIATION_INTERVAL_MS: "600000",
     },
   },
 });
