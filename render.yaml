@@ -1,0 +1,53 @@
+# Render Blueprint (https://render.com/docs/blueprint-spec) for a testing
+# deployment of this backend — NOT a production configuration. NODE_ENV is
+# "development" on purpose so frontend teams can hit a real URL without real
+# OTP/SMS: it keeps the OTP bypass (OTP_BYPASS_VERIFICATION, otp.service.ts)
+# usable and the two dev-only money endpoints (POST /wallet/dev-credit,
+# POST /withdrawals/:id/dev-resolve-payout) enabled — both are hard-blocked
+# whenever NODE_ENV=production instead. Anyone who finds this URL can hit
+# those dev endpoints, since nothing else gates them — don't point this at
+# real user data or reuse these settings for an actual production deploy.
+#
+# DATABASE_URL, JWT_SECRET, and every Twilio/AWS/Agora credential are left
+# unset here (sync: false) — set their real values in the Render dashboard
+# after the first deploy, not in this file. Everything except DATABASE_URL
+# is optional: Twilio/AWS/Agora missing just means their respective features
+# (real SMS, KYC uploads, real Agora tokens) fall back to already-documented
+# dev stubs (see .env.example) instead of failing outright.
+services:
+  - type: web
+    name: triloplan-backend
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build && npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: development
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: OTP_BYPASS_VERIFICATION
+        value: "true"
+      - key: OTP_REAL_SMS_IN_DEV
+        value: "false"
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_S3_BUCKET_NAME
+        sync: false
+      - key: AGORA_APP_ID
+        sync: false
+      - key: AGORA_APP_CERTIFICATE
+        sync: false
