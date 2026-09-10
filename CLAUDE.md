@@ -16,7 +16,14 @@ Backend for a three-sided video-chat platform (User app, Host app, Admin app —
 ## How to work in this repo — route based on what's being asked
 
 - **Writing or changing backend code** (new endpoint, new module, business logic, refactor, "implement X", "build Y") → invoke the `dev-standards` skill before writing anything. It sets the coding standard for this repo (simple, explicit, minimally-abstracted — see the skill for the full reasoning). This applies to every change, not just large ones.
-  - If the change adds, removes, or changes the request/response shape of an API endpoint, also update `postman/TriloPlan-Backend.postman_collection.json` (and the environment file if a new variable is needed) in the same pass — not as a follow-up. Verify the updated collection actually works with `npx newman run postman/TriloPlan-Backend.postman_collection.json -e postman/TriloPlan-Local.postman_environment.json` against a running dev server before calling the change done, the same as any other test.
+  - If the change adds, removes, or changes the request/response shape of an API endpoint, also update whichever of the three per-app Postman collections actually cover that endpoint (an endpoint can be in more than one — e.g. `/gifts` is in both Host and User) in the same pass — not as a follow-up:
+    - `postman/TriloPlan-Host.postman_collection.json` — Host app, screen-verified against the Host app's Figma.
+    - `postman/TriloPlan-User.postman_collection.json` — User app, seeded with what's built for the USER role; revisit against Figma once the User app's screens are shared.
+    - `postman/TriloPlan-Admin.postman_collection.json` — Admin app, everything under `/admin/*` plus admin login.
+    - All three share `postman/TriloPlan-Local.postman_environment.json` (just `baseUrl` — update it if a cross-collection variable is ever needed). Verify each changed collection actually works before calling the change done, the same as any other test:
+      `npx newman run postman/TriloPlan-Host.postman_collection.json -e postman/TriloPlan-Local.postman_environment.json`
+      `npx newman run postman/TriloPlan-User.postman_collection.json -e postman/TriloPlan-Local.postman_environment.json`
+      `npx newman run postman/TriloPlan-Admin.postman_collection.json -e postman/TriloPlan-Local.postman_environment.json`
 - **A reported bug, pasted error/stack trace, or "this isn't working"** → invoke the `debug-issue` skill before touching any code. It requires checking `BUG_HISTORY.md` for a known fix first, mapping every place the affected code is used, and proposing the fix for approval before applying it — do not skip straight to editing code for a bug report.
 - **Anything else** (planning, architecture questions, doc updates) → use judgment, referencing the docs table above as needed.
 

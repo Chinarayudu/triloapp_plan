@@ -13,6 +13,7 @@ import { hostsRouter } from "./modules/hosts/hosts.routes";
 import { liveRouter } from "./modules/live/live.routes";
 import { moderationRouter } from "./modules/moderation/moderation.routes";
 import { usersRouter } from "./modules/users/users.routes";
+import { earningsRouter } from "./modules/wallet/earnings.routes";
 import { walletRouter } from "./modules/wallet/wallet.routes";
 import { withdrawalsRouter } from "./modules/withdrawals/withdrawal.routes";
 import { healthRouter } from "./routes/health";
@@ -30,6 +31,7 @@ export function createApp(): Express {
   app.use(usersRouter);
   app.use(hostsRouter);
   app.use(walletRouter);
+  app.use(earningsRouter);
   app.use(callsRouter);
   app.use(chatRouter);
   app.use(giftsRouter);

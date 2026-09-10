@@ -1,0 +1,635 @@
+{
+  "info": {
+    "_postman_id": "c2a3b4d5-2345-4b6c-9d7e-user000000002",
+    "name": "TriloPlan User API",
+    "description": "Backend API surface for the User app — seeded with everything already built for the USER role (auth, discovery, wallet, calls, chat, gifts, live viewing, moderation). No User-app Figma screens have been reviewed yet (only the Host app has been so far), so this collection is not screen-verified the way TriloPlan-Host is — it covers what the backend already exposes for USER, and should be revisited once the User app's screens are shared. See CLAUDE.md, BACKEND_PLAN.md and BRD.md in the repo for full backend context.\n\nCompanion collections: `TriloPlan-Host.postman_collection.json` (screen-verified against the Host app's Figma) and `TriloPlan-Admin.postman_collection.json`.\n\n## OTP login while there's no real SMS yet\nThe backend has a dev-only bypass (`OTP_BYPASS_VERIFICATION=true` in the server's `.env`, off in production): `POST /auth/otp/verify` accepts ANY phone + ANY 6-digit code, no prior `/otp/request` call required. This collection still calls `/otp/request` first and saves `devCode` (harmless either way).\n\n## Recommended run order (Collection Runner-safe, top to bottom)\nAuth — User Login → Profile (Me) → Setup — Counterpart Host → Hosts — Discovery & Follow → Wallet → Calls → Chat → Gifts → Live Broadcasting → Moderation → Auth — Session.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "noauth" },
+  "event": [],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000", "type": "string" },
+    { "key": "userPhone", "value": "+919876520001", "type": "string" },
+    { "key": "userDevCode", "value": "", "type": "string" },
+    { "key": "userAccessToken", "value": "", "type": "string" },
+    { "key": "userRefreshToken", "value": "", "type": "string" },
+    { "key": "userId", "value": "", "type": "string" },
+    { "key": "hostPhone", "value": "+919876520555", "type": "string", "description": "Counterpart HOST identity (Setup folder), so the user has someone real to browse/call/gift." },
+    { "key": "hostDevCode", "value": "", "type": "string" },
+    { "key": "hostAccessToken", "value": "", "type": "string" },
+    { "key": "hostId", "value": "", "type": "string" },
+    { "key": "callId", "value": "", "type": "string" },
+    { "key": "kycUploadUrl", "value": "", "type": "string" },
+    { "key": "kycDocumentKey", "value": "", "type": "string" },
+    { "key": "chatConversationId", "value": "", "type": "string" },
+    { "key": "giftId", "value": "", "type": "string" },
+    { "key": "liveBroadcastId", "value": "", "type": "string" },
+    { "key": "reportId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Auth — User Login",
+      "item": [
+        {
+          "name": "1. Request OTP — User Phone",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{userPhone}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.devCode) { pm.collectionVariables.set(\"userDevCode\", jsonData.devCode); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Verify OTP — User App",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{userPhone}}\",\n  \"code\": \"{{userDevCode}}\",\n  \"role\": \"user\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] },
+            "description": "Any 6-digit code works while OTP_BYPASS_VERIFICATION is on."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) {",
+                  "    pm.collectionVariables.set(\"userAccessToken\", jsonData.accessToken);",
+                  "    pm.collectionVariables.set(\"userRefreshToken\", jsonData.refreshToken);",
+                  "    pm.collectionVariables.set(\"userId\", jsonData.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Profile (Me)",
+      "item": [
+        {
+          "name": "Get My Profile",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] }
+          }
+        },
+        {
+          "name": "Update My Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Rahul\",\n  \"email\": \"rahul@mail.com\"\n}" },
+            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] }
+          }
+        },
+        {
+          "name": "1. Get KYC Upload URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"contentType\": \"application/pdf\"\n}" },
+            "url": { "raw": "{{baseUrl}}/me/kyc/upload-url", "host": ["{{baseUrl}}"], "path": ["me", "kyc", "upload-url"] },
+            "description": "18+ age verification (BR-MOD-02) reuses the same KYC flow as hosts."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"kycUploadUrl\", jsonData.uploadUrl);",
+                  "pm.collectionVariables.set(\"kycDocumentKey\", jsonData.key);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Upload Document to S3",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/pdf", "type": "text" }],
+            "body": { "mode": "raw", "raw": "This is placeholder file content for testing the upload flow." },
+            "url": { "raw": "{{kycUploadUrl}}", "host": ["{{kycUploadUrl}}"] }
+          }
+        },
+        {
+          "name": "3. Submit KYC Document",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"documents\": [\n    { \"documentType\": \"id_front\", \"key\": \"{{kycDocumentKey}}\" }\n  ]\n}" },
+            "url": { "raw": "{{baseUrl}}/me/kyc", "host": ["{{baseUrl}}"], "path": ["me", "kyc"] }
+          }
+        },
+        {
+          "name": "4. Get My KYC Status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me/kyc", "host": ["{{baseUrl}}"], "path": ["me", "kyc"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Setup — Counterpart Host",
+      "description": "A throwaway HOST identity, online with a rate set, purely so the User flows below (browse, call, chat, gift) have someone real to act on.",
+      "item": [
+        {
+          "name": "1. Request OTP — Counterpart Host",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{hostPhone}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["var jsonData = pm.response.json();", "if (jsonData.devCode) { pm.collectionVariables.set(\"hostDevCode\", jsonData.devCode); }"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Verify OTP — Counterpart Host",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{hostPhone}}\",\n  \"code\": \"{{hostDevCode}}\",\n  \"role\": \"host\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) {",
+                  "    pm.collectionVariables.set(\"hostAccessToken\", jsonData.accessToken);",
+                  "    pm.collectionVariables.set(\"hostId\", jsonData.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Set Host Rate",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"ratePerMinutePaise\": 2400\n}" },
+            "url": { "raw": "{{baseUrl}}/me/host-profile", "host": ["{{baseUrl}}"], "path": ["me", "host-profile"] }
+          }
+        },
+        {
+          "name": "4. Set Host Online",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"isOnline\": true\n}" },
+            "url": { "raw": "{{baseUrl}}/me/presence", "host": ["{{baseUrl}}"], "path": ["me", "presence"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Hosts — Discovery & Follow",
+      "item": [
+        {
+          "name": "List Hosts",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/hosts?onlineOnly=true&sort=rating_desc&page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["hosts"],
+              "query": [
+                { "key": "onlineOnly", "value": "true" },
+                { "key": "sort", "value": "rating_desc" },
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "20" }
+              ]
+            },
+            "description": "sort also accepts rate_asc|rate_desc|online_first. Each host now includes rating: {average, count}."
+          }
+        },
+        {
+          "name": "Follow Host",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/hosts/{{hostId}}/follow", "host": ["{{baseUrl}}"], "path": ["hosts", "{{hostId}}", "follow"] }
+          }
+        },
+        {
+          "name": "List My Followed Hosts",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me/following", "host": ["{{baseUrl}}"], "path": ["me", "following"] }
+          }
+        },
+        {
+          "name": "Unfollow Host",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/hosts/{{hostId}}/unfollow", "host": ["{{baseUrl}}"], "path": ["hosts", "{{hostId}}", "unfollow"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wallet",
+      "item": [
+        {
+          "name": "Get My Wallet",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/wallet", "host": ["{{baseUrl}}"], "path": ["wallet"] }
+          }
+        },
+        {
+          "name": "Dev-Credit My Wallet (non-prod)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"amountPaise\": 500000\n}" },
+            "url": { "raw": "{{baseUrl}}/wallet/dev-credit", "host": ["{{baseUrl}}"], "path": ["wallet", "dev-credit"] },
+            "description": "No real payment gateway wired up yet — this is the \"Add money\" recharge stand-in."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Calls",
+      "item": [
+        {
+          "name": "1. Initiate Call",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"hostId\": \"{{hostId}}\",\n  \"type\": \"video\"\n}" },
+            "url": { "raw": "{{baseUrl}}/calls", "host": ["{{baseUrl}}"], "path": ["calls"] },
+            "description": "type is \"video\" or \"voice\" — the host needs the matching per-type rate set (Setup folder only sets the video rate)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"callId\", jsonData.callId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Get Call",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/calls/{{callId}}", "host": ["{{baseUrl}}"], "path": ["calls", "{{callId}}"] }
+          }
+        },
+        {
+          "name": "3. End Call",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/calls/{{callId}}/end", "host": ["{{baseUrl}}"], "path": ["calls", "{{callId}}", "end"] },
+            "description": "Ends a still-ringing call as \"missed\" if the host never accepted — fine for exercising the endpoint."
+          }
+        },
+        {
+          "name": "4. Submit Rating",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"stars\": 5\n}" },
+            "url": { "raw": "{{baseUrl}}/calls/{{callId}}/rating", "host": ["{{baseUrl}}"], "path": ["calls", "{{callId}}", "rating"] },
+            "description": "Only succeeds once the call has reached \"completed\" — will 409 if run right after End Call above left it \"missed\"."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "1. Send Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"recipientId\": \"{{hostId}}\",\n  \"content\": \"Hey! Are you free for a quick call?\"\n}" },
+            "url": { "raw": "{{baseUrl}}/chat/messages", "host": ["{{baseUrl}}"], "path": ["chat", "messages"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"chatConversationId\", jsonData.conversationId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. List My Conversations",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/chat/conversations", "host": ["{{baseUrl}}"], "path": ["chat", "conversations"] }
+          }
+        },
+        {
+          "name": "3. Get Conversation Messages",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/chat/conversations/{{chatConversationId}}/messages?page=1&pageSize=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["chat", "conversations", "{{chatConversationId}}", "messages"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "pageSize", "value": "50" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Gifts",
+      "item": [
+        {
+          "name": "1. List Gift Catalog",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/gifts", "host": ["{{baseUrl}}"], "path": ["gifts"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "var rose = jsonData.gifts.find(function (g) { return g.name === \"Rose\"; });",
+                  "if (rose) { pm.collectionVariables.set(\"giftId\", rose.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Send Gift",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"recipientId\": \"{{hostId}}\",\n  \"giftId\": \"{{giftId}}\",\n  \"context\": \"chat\",\n  \"contextId\": \"{{chatConversationId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/gifts/send", "host": ["{{baseUrl}}"], "path": ["gifts", "send"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Live Broadcasting",
+      "item": [
+        {
+          "name": "List Live Broadcasts",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/live/broadcasts", "host": ["{{baseUrl}}"], "path": ["live", "broadcasts"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.broadcasts && jsonData.broadcasts.length > 0) { pm.collectionVariables.set(\"liveBroadcastId\", jsonData.broadcasts[0].id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Join Broadcast",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/live/broadcasts/{{liveBroadcastId}}/join",
+              "host": ["{{baseUrl}}"],
+              "path": ["live", "broadcasts", "{{liveBroadcastId}}", "join"]
+            }
+          }
+        },
+        {
+          "name": "Send Live Chat Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"content\": \"You look great tonight!\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/live/broadcasts/{{liveBroadcastId}}/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["live", "broadcasts", "{{liveBroadcastId}}", "chat"]
+            }
+          }
+        },
+        {
+          "name": "Leave Broadcast",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/live/broadcasts/{{liveBroadcastId}}/leave",
+              "host": ["{{baseUrl}}"],
+              "path": ["live", "broadcasts", "{{liveBroadcastId}}", "leave"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Moderation",
+      "item": [
+        {
+          "name": "1. Block Host",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"userId\": \"{{hostId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/moderation/blocks", "host": ["{{baseUrl}}"], "path": ["moderation", "blocks"] }
+          }
+        },
+        {
+          "name": "2. List Blocked",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/moderation/blocks", "host": ["{{baseUrl}}"], "path": ["moderation", "blocks"] }
+          }
+        },
+        {
+          "name": "3. Unblock Host",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/moderation/blocks/{{hostId}}", "host": ["{{baseUrl}}"], "path": ["moderation", "blocks", "{{hostId}}"] }
+          }
+        },
+        {
+          "name": "4. File Report",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"targetType\": \"host\",\n  \"targetId\": \"{{hostId}}\",\n  \"reason\": \"Nudity or sexual content\"\n}" },
+            "url": { "raw": "{{baseUrl}}/moderation/reports", "host": ["{{baseUrl}}"], "path": ["moderation", "reports"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["var jsonData = pm.response.json();", "if (jsonData.id) { pm.collectionVariables.set(\"reportId\", jsonData.id); }"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Log Capture Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"context\": \"call\",\n  \"contextId\": \"{{callId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/moderation/capture-event", "host": ["{{baseUrl}}"], "path": ["moderation", "capture-event"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth — Session",
+      "item": [
+        {
+          "name": "1. Refresh Access Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{userRefreshToken}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "token", "refresh"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) {",
+                  "    pm.collectionVariables.set(\"userAccessToken\", jsonData.accessToken);",
+                  "    pm.collectionVariables.set(\"userRefreshToken\", jsonData.refreshToken);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{userRefreshToken}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth", "logout"] }
+          }
+        }
+      ]
+    }
+  ]
+}

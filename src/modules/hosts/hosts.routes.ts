@@ -19,7 +19,7 @@ function parseHostId(raw: unknown): string {
 
 const listQuerySchema = z.object({
   onlineOnly: z.enum(["true", "false"]).optional(),
-  sort: z.enum(["rate_asc", "rate_desc", "online_first"]).optional(),
+  sort: z.enum(["rate_asc", "rate_desc", "online_first", "rating_desc"]).optional(),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(50).default(20),
 });

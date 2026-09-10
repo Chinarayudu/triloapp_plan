@@ -233,6 +233,8 @@ const withdrawalPolicySchema = z.object({
   maxRequestsPerWindow: z.number().int().positive(),
   windowDays: z.number().int().positive(),
   autoApproveThresholdPaise: z.number().int().nonnegative(),
+  processingFeePaise: z.number().int().nonnegative().default(0),
+  tdsBasisPoints: z.number().int().nonnegative().default(0),
 });
 
 adminRouter.post(

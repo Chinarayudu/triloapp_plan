@@ -195,6 +195,8 @@ export async function createWithdrawalPolicyConfig(
     maxRequestsPerWindow: number;
     windowDays: number;
     autoApproveThresholdPaise: number;
+    processingFeePaise: number;
+    tdsBasisPoints: number;
   },
 ) {
   const [previousActive] = await db.select().from(withdrawalPolicyConfigs).orderBy(desc(withdrawalPolicyConfigs.effectiveFrom)).limit(1);

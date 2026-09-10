@@ -1,9 +1,10 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "../../db/client";
 import { hostProfiles, users } from "../../db/schema";
+import { getHostRatingSummaries, RatingSummary } from "../calls/ratings.service";
 import { listOnlineHostIds } from "./presence.store";
 
-export type HostListSort = "rate_asc" | "rate_desc" | "online_first";
+export type HostListSort = "rate_asc" | "rate_desc" | "online_first" | "rating_desc";
 
 export type HostListParams = {
   onlineOnly: boolean;
@@ -19,6 +20,7 @@ export type HostListItem = {
   gallery: string[];
   ratePerMinutePaise: number | null;
   isOnline: boolean;
+  rating: RatingSummary;
 };
 
 export async function listHosts(
@@ -37,21 +39,28 @@ export async function listHosts(
     .where(and(eq(users.role, "host"), eq(users.status, "active")));
 
   const onlineIds = new Set(listOnlineHostIds());
-  let hosts: HostListItem[] = rows.map((r) => ({ ...r, isOnline: onlineIds.has(r.id) }));
+  const ratings = await getHostRatingSummaries(rows.map((r) => r.id));
+  let hosts: HostListItem[] = rows.map((r) => ({
+    ...r,
+    isOnline: onlineIds.has(r.id),
+    rating: ratings.get(r.id) ?? { average: null, count: 0 },
+  }));
 
   if (params.onlineOnly) {
     hosts = hosts.filter((h) => h.isOnline);
   }
 
-  // Presence lives outside Postgres (see presence.store.ts), so sorting on
-  // it — or on anything merged in after the query — has to happen here in
-  // application code rather than as a SQL ORDER BY.
+  // Presence/ratings are merged in above rather than queried in SQL, so
+  // sorting on either — or on anything else merged in after the query —
+  // has to happen here in application code rather than as a SQL ORDER BY.
   if (params.sort === "rate_asc") {
     hosts.sort((a, b) => (a.ratePerMinutePaise ?? Infinity) - (b.ratePerMinutePaise ?? Infinity));
   } else if (params.sort === "rate_desc") {
     hosts.sort((a, b) => (b.ratePerMinutePaise ?? -Infinity) - (a.ratePerMinutePaise ?? -Infinity));
   } else if (params.sort === "online_first") {
     hosts.sort((a, b) => Number(b.isOnline) - Number(a.isOnline));
+  } else if (params.sort === "rating_desc") {
+    hosts.sort((a, b) => (b.rating.average ?? -Infinity) - (a.rating.average ?? -Infinity));
   }
 
   const total = hosts.length;

@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "../../db/client";
-import { hostProfiles, hostWallets, users, wallets } from "../../db/schema";
+import { hostProfiles, hostWallets, notificationPreferences, users, wallets } from "../../db/schema";
 
 export type SignupRole = "user" | "host";
 
@@ -32,6 +32,7 @@ export async function createUser(phone: string, role: SignupRole) {
   } else {
     await db.insert(wallets).values({ userId: user.id });
   }
+  await db.insert(notificationPreferences).values({ userId: user.id });
   return user;
 }
 

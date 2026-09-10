@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { db, pool } from "./client";
 import { adultModeConfigs, beansEarnConfigs, commissionConfigs, gifts, withdrawalPolicyConfigs, withdrawalSlabs } from "./schema";
 
@@ -24,16 +25,25 @@ async function seed(): Promise<void> {
     console.log("Beans earn config already present, skipping");
   }
 
-  const existingGifts = await db.select().from(gifts).limit(1);
-  if (existingGifts.length === 0) {
-    await db.insert(gifts).values([
-      { name: "Rose", pricePaise: 1000 },
-      { name: "Heart", pricePaise: 5000 },
-      { name: "Crown", pricePaise: 20000 },
-    ]);
-    console.log("Seeded gift catalog: Rose (₹10), Heart (₹50), Crown (₹200)");
-  } else {
-    console.log("Gift catalog already present, skipping");
+  // Per-name check (not "insert only if the table is empty" like the other
+  // blocks here) — the catalog grew after the initial 3-gift seed (Host app
+  // design follow-up added Gift box/Rocket/Diamond to match the "Ask for a
+  // gift" picker), so an environment already seeded with the original 3
+  // still needs the new ones added, not skipped.
+  const catalogDefaults: Array<{ name: string; pricePaise: number }> = [
+    { name: "Rose", pricePaise: 1000 },
+    { name: "Heart", pricePaise: 5000 },
+    { name: "Gift box", pricePaise: 20000 },
+    { name: "Crown", pricePaise: 50000 },
+    { name: "Rocket", pricePaise: 100000 },
+    { name: "Diamond", pricePaise: 200000 },
+  ];
+  for (const gift of catalogDefaults) {
+    const [existing] = await db.select().from(gifts).where(eq(gifts.name, gift.name)).limit(1);
+    if (!existing) {
+      await db.insert(gifts).values(gift);
+      console.log(`Seeded gift: ${gift.name}`);
+    }
   }
 
   const existingPolicy = await db.select().from(withdrawalPolicyConfigs).limit(1);
@@ -43,8 +53,10 @@ async function seed(): Promise<void> {
       maxRequestsPerWindow: 1,
       windowDays: 7,
       autoApproveThresholdPaise: 100000, // ₹1000
+      processingFeePaise: 0,
+      tdsBasisPoints: 100, // 1% TDS, matches the confirm-withdrawal screen
     });
-    console.log("Seeded withdrawal policy: min ₹5, 1 per 7 days, auto-approve under ₹1000");
+    console.log("Seeded withdrawal policy: min ₹5, 1 per 7 days, auto-approve under ₹1000, 1% TDS");
   } else {
     console.log("Withdrawal policy config already present, skipping");
   }

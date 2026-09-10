@@ -62,9 +62,18 @@ export const hostProfiles = pgTable("host_profiles", {
     .references(() => users.id, { onDelete: "cascade" }),
   bio: text("bio"),
   gallery: text("gallery").array().notNull().default([]),
-  // Smallest currency unit (paise), same convention as wallet balances (BACKEND_PLAN.md §1) — avoids float drift.
+  // Smallest currency unit (paise), same convention as wallet balances
+  // (BACKEND_PLAN.md §1) — avoids float drift. This is the video-call rate;
+  // voice and private-live have their own rates below (Rate Settings screen,
+  // Host app design follow-up) since a host can price each differently.
   ratePerMinutePaise: integer("rate_per_minute_paise"),
-  payoutDetails: text("payout_details"), // JSON string; structure finalized when withdrawals (Phase 8) land
+  voiceRatePerMinutePaise: integer("voice_rate_per_minute_paise"),
+  // Stored ahead of a consuming feature — no private-live billing flow
+  // exists yet, same "field before the feature" precedent as this table's
+  // original payoutDetails placeholder.
+  privateLiveRatePerMinutePaise: integer("private_live_rate_per_minute_paise"),
+  autoAcceptCalls: boolean("auto_accept_calls").notNull().default(true),
+  voiceCallsOnlyAfterMidnight: boolean("voice_calls_only_after_midnight").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -85,6 +94,25 @@ export const hostGalleryItems = pgTable("host_gallery_items", {
   mediaType: galleryMediaTypeEnum("media_type").notNull(),
   url: text("url").notNull(),
   durationSeconds: integer("duration_seconds"), // only meaningful for mediaType=video
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// A host's payout destinations (Host app design follow-up) — replaces the
+// old single hostProfiles.payoutDetails JSON blob. A host can hold several
+// (e.g. a primary bank account + a backup UPI id); exactly one is primary
+// at a time, and withdrawal.service.ts snapshots the primary one onto each
+// withdrawal request at creation time, same "snapshot, don't reference"
+// convention as every other _snapshot field in this schema.
+export const payoutMethodTypeEnum = pgEnum("payout_method_type", ["upi", "bank"]);
+
+export const payoutMethods = pgTable("payout_methods", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  hostId: uuid("host_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  type: payoutMethodTypeEnum("type").notNull(),
+  detailsJson: text("details_json").notNull(), // JSON string — { type: "upi", vpa } or { type: "bank", accountHolderName, accountNumber, ifsc }
+  isPrimary: boolean("is_primary").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -152,6 +180,27 @@ export const hostFollows = pgTable(
   (table) => [unique().on(table.userId, table.hostId)],
 );
 
+// A safety tool distinct from moderationReports below (BRD.md lists
+// "block/report" as two separate host safety tools) — blocking has an
+// immediate, mechanical effect (calls.service.ts/chat.service.ts reject
+// between blocked pairs) rather than routing through human review.
+// blockerId -> blockedId is directional: only the blocker's calls/messages
+// to the blocked party (and vice versa) are affected, not a mutual state.
+export const userBlocks = pgTable(
+  "user_blocks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    blockerId: uuid("blocker_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    blockedId: uuid("blocked_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique().on(table.blockerId, table.blockedId)],
+);
+
 export const otpCodes = pgTable("otp_codes", {
   id: uuid("id").primaryKey().defaultRandom(),
   phone: text("phone").notNull(),
@@ -188,6 +237,30 @@ export const loginEvents = pgTable("login_events", {
     .references(() => users.id, { onDelete: "cascade" }),
   deviceFingerprint: text("device_fingerprint"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Per-user push/notification toggle preferences (Host app Notification
+// Settings screen, design follow-up) — one row per user, created at signup
+// (users.service.ts's createUser) alongside the wallet row, same "exactly
+// one place this can come into being" convention. Defaults below match the
+// toggle states shown in the design (calls/gifts/withdrawal-updates on,
+// reminders/summary/promos off, DND 1-7AM on).
+export const notificationPreferences = pgTable("notification_preferences", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  incomingCalls: boolean("incoming_calls").notNull().default(true),
+  missedCalls: boolean("missed_calls").notNull().default(true),
+  newMessages: boolean("new_messages").notNull().default(true),
+  callReminders: boolean("call_reminders").notNull().default(false),
+  giftsReceived: boolean("gifts_received").notNull().default(true),
+  withdrawalUpdates: boolean("withdrawal_updates").notNull().default(true),
+  weeklyEarningsSummary: boolean("weekly_earnings_summary").notNull().default(false),
+  promotionsAndTips: boolean("promotions_and_tips").notNull().default(false),
+  dndEnabled: boolean("dnd_enabled").notNull().default(true),
+  dndStartHour: integer("dnd_start_hour").notNull().default(1), // 0-23, local-time-naive (BACKEND_PLAN.md has no per-user timezone concept yet)
+  dndEndHour: integer("dnd_end_hour").notNull().default(7),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ---------------------------------------------------------------------------
@@ -306,6 +379,9 @@ export const callStatusEnum = pgEnum("call_status", [
   "missed",
   "failed",
 ]);
+// video is the default (the only type that existed before this column was
+// added — Host app design follow-up), so existing rows backfill as video.
+export const callTypeEnum = pgEnum("call_type", ["video", "voice"]);
 
 export const calls = pgTable("calls", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -316,6 +392,7 @@ export const calls = pgTable("calls", {
     .notNull()
     .references(() => users.id),
   status: callStatusEnum("status").notNull().default("ringing"),
+  type: callTypeEnum("type").notNull().default("video"),
   // Snapshotted at call creation so later admin config changes can't alter
   // an in-flight or already-settled call (BR-COM-02).
   ratePerMinutePaiseSnapshot: integer("rate_per_minute_paise_snapshot").notNull(),
@@ -341,6 +418,31 @@ export const callBillingTicks = pgTable("call_billing_ticks", {
   beansCredited: integer("beans_credited").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// A 1-5 star rating either call participant leaves for the other after the
+// call ends (Host app's call-ended screen; BR-DIS-02 needs the resulting
+// host-side aggregate for discovery sort/filter). One rating per
+// (call, rater) — a host's aggregate rating is avg(stars) where
+// ratedUserId = that host, computed on read (ratings.service.ts) rather
+// than a maintained cache column, since it's not on any hot path.
+export const callRatings = pgTable(
+  "call_ratings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    callId: uuid("call_id")
+      .notNull()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    raterId: uuid("rater_id")
+      .notNull()
+      .references(() => users.id),
+    ratedUserId: uuid("rated_user_id")
+      .notNull()
+      .references(() => users.id),
+    stars: integer("stars").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique().on(table.callId, table.raterId)],
+);
 
 // ---------------------------------------------------------------------------
 // Chat (BACKEND_PLAN.md §4 — self-built, not routed through a vendor
@@ -512,6 +614,12 @@ export const withdrawalPolicyConfigs = pgTable("withdrawal_policy_configs", {
   maxRequestsPerWindow: integer("max_requests_per_window").notNull(),
   windowDays: integer("window_days").notNull(),
   autoApproveThresholdPaise: integer("auto_approve_threshold_paise").notNull(),
+  // Confirm-withdrawal screen breakdown (Host app design follow-up) — a
+  // flat processing fee plus TDS (tax deducted at source, out of 10000,
+  // e.g. 100 = 1%), both deducted from the payout, never from the beans
+  // debited (withdrawal.service.ts's requestWithdrawal).
+  processingFeePaise: integer("processing_fee_paise").notNull().default(0),
+  tdsBasisPoints: integer("tds_basis_points").notNull().default(0),
   effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -526,7 +634,15 @@ export const withdrawalRequests = pgTable("withdrawal_requests", {
   // as calls.ratePerMinutePaiseSnapshot — a later slab table change must
   // never retroactively alter an already-created request.
   paisePerBeanSnapshot: integer("paise_per_bean_snapshot").notNull(),
+  // Gross amount (beans * slab rate) — unchanged meaning. The three fields
+  // below are the fee/TDS breakdown deducted from this to get what's
+  // actually sent to the payout gateway (netPayoutPaise); beans debited
+  // from the host's wallet are always the full requested amount, never
+  // reduced by these.
   convertedAmountPaise: integer("converted_amount_paise").notNull(),
+  processingFeePaise: integer("processing_fee_paise").notNull().default(0),
+  tdsPaise: integer("tds_paise").notNull().default(0),
+  netPayoutPaise: integer("net_payout_paise").notNull().default(0),
   status: withdrawalStatusEnum("status").notNull().default("pending"),
   payoutDetailsSnapshot: text("payout_details_snapshot").notNull(),
   payoutTxnId: text("payout_txn_id"),

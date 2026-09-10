@@ -2,6 +2,7 @@ import { and, desc, eq, or } from "drizzle-orm";
 import { db } from "../../db/client";
 import { chatConversations, chatMessages, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
+import { areBlocked } from "../moderation/blocks.service";
 import { getUserById } from "../users/users.service";
 
 type ChatConversation = typeof chatConversations.$inferSelect;
@@ -17,6 +18,10 @@ async function resolveParticipants(
   const recipient = await getUserById(recipientId);
   if (!recipient || recipient.status !== "active") {
     throw new AppError(404, "Recipient not found");
+  }
+
+  if (await areBlocked(senderId, recipientId)) {
+    throw new AppError(403, "This message cannot be delivered");
   }
 
   if (senderRole === "user") {

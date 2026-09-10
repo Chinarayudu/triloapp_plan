@@ -7,6 +7,7 @@ import { AppError } from "../../lib/errors";
 import { logger } from "../../lib/logger";
 import { sendPushNotification } from "../../lib/push";
 import { emitToUser, isUserConnected } from "../../realtime/socket";
+import { areBlocked } from "../moderation/blocks.service";
 import { checkCallCollusion } from "../moderation/fraud.service";
 import { getHostProfile, getUserById } from "../users/users.service";
 import {
@@ -71,15 +72,21 @@ function channelNameFor(callId: string): string {
 export async function initiateCall(
   userId: string,
   hostId: string,
+  type: CallRow["type"] = "video",
 ): Promise<{ call: CallRow; channelName: string; agoraToken: string }> {
   const host = await getUserById(hostId);
   if (!host || host.role !== "host" || host.status !== "active") {
     throw new AppError(404, "Host not found");
   }
 
+  if (await areBlocked(userId, hostId)) {
+    throw new AppError(403, "This call cannot be connected");
+  }
+
   const hostProfile = await getHostProfile(hostId);
-  if (!hostProfile?.ratePerMinutePaise) {
-    throw new AppError(400, "Host hasn't set a per-minute rate yet");
+  const ratePerMinutePaise = type === "voice" ? hostProfile?.voiceRatePerMinutePaise : hostProfile?.ratePerMinutePaise;
+  if (!ratePerMinutePaise) {
+    throw new AppError(400, `Host hasn't set a ${type} rate yet`);
   }
 
   if (!isOnline(hostId)) {
@@ -92,7 +99,7 @@ export async function initiateCall(
     throw new AppError(409, "You already have an active call");
   }
 
-  const requiredBalance = hostProfile.ratePerMinutePaise * MIN_BUFFER_MINUTES;
+  const requiredBalance = ratePerMinutePaise * MIN_BUFFER_MINUTES;
   const balance = await getUserWalletBalance(userId);
   if (balance < requiredBalance) {
     throw new AppError(402, "Insufficient balance to start a call");
@@ -107,7 +114,8 @@ export async function initiateCall(
       userId,
       hostId,
       status: "ringing",
-      ratePerMinutePaiseSnapshot: hostProfile.ratePerMinutePaise,
+      type,
+      ratePerMinutePaiseSnapshot: ratePerMinutePaise,
       commissionBasisPointsSnapshot,
       paisePerBeanSnapshot,
     })

@@ -1,8 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
+import { AppError } from "../../lib/errors";
 import { requireAuth } from "../../middleware/auth";
 import { perUserRateLimit } from "../../middleware/rateLimit";
 import { validateBody } from "../../middleware/validate";
+import { blockUser, listBlocked, unblockUser } from "./blocks.service";
 import { createReport, logCaptureEvent } from "./moderation.service";
 
 export const moderationRouter = Router();
@@ -39,6 +41,39 @@ moderationRouter.post(
     }
   },
 );
+
+// A safety tool distinct from reports above (BRD.md lists "block/report" as
+// two separate host safety tools) — blocking mechanically stops calls/chat
+// between the pair (calls.service.ts, chat.service.ts), no admin review.
+const blockSchema = z.object({ userId: z.string().uuid() });
+
+moderationRouter.post("/moderation/blocks", requireAuth, validateBody(blockSchema), async (req, res, next) => {
+  try {
+    const { userId } = req.body as z.infer<typeof blockSchema>;
+    res.status(201).json(await blockUser(req.user!.sub, userId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+moderationRouter.delete("/moderation/blocks/:userId", requireAuth, async (req, res, next) => {
+  try {
+    const parsed = z.string().uuid().safeParse(req.params.userId);
+    if (!parsed.success) throw new AppError(400, "Invalid user id");
+    await unblockUser(req.user!.sub, parsed.data);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+moderationRouter.get("/moderation/blocks", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ blocked: await listBlocked(req.user!.sub) });
+  } catch (err) {
+    next(err);
+  }
+});
 
 const captureEventSchema = z.object({
   context: z.enum(["call", "chat", "live"]),

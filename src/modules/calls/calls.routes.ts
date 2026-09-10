@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "../../middleware/auth";
 import { perUserRateLimit } from "../../middleware/rateLimit";
 import { validateBody } from "../../middleware/validate";
 import { acceptCall, endCall, getCallById, initiateCall, rejectCall } from "./calls.service";
+import { submitRating } from "./ratings.service";
 
 export const callsRouter = Router();
 
@@ -13,7 +14,7 @@ export const callsRouter = Router();
 // user (BACKEND_PLAN.md §8 "Rate limiting", Phase 11).
 const initiateCallLimiter = perUserRateLimit(60_000, 10);
 
-const initiateSchema = z.object({ hostId: z.string().uuid() });
+const initiateSchema = z.object({ hostId: z.string().uuid(), type: z.enum(["video", "voice"]).default("video") });
 const callIdSchema = z.string().uuid();
 
 // Express 5's param typing is `string | string[]` (path-to-regexp allows
@@ -33,13 +34,15 @@ callsRouter.post(
   validateBody(initiateSchema),
   async (req, res, next) => {
     try {
-      const { hostId } = req.body as z.infer<typeof initiateSchema>;
-      const { call, channelName, agoraToken } = await initiateCall(req.user!.sub, hostId);
+      const { hostId, type } = req.body as z.infer<typeof initiateSchema>;
+      const { call, channelName, agoraToken } = await initiateCall(req.user!.sub, hostId, type);
       // secureMode (BACKEND_PLAN.md §5, BR-MOD-03) — always true for 1:1
       // calls, not conditional on the 18+ toggle: this whole platform is
       // treated as sensitive-by-default (BACKEND_PLAN.md §3), unlike a live
       // broadcast where only specifically-flagged content needs it.
-      res.status(201).json({ callId: call.id, status: call.status, channelName, secureMode: true, agoraToken });
+      res
+        .status(201)
+        .json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, agoraToken });
     } catch (err) {
       next(err);
     }
@@ -62,7 +65,7 @@ callsRouter.get("/calls/:id", requireAuth, async (req, res, next) => {
 callsRouter.post("/calls/:id/accept", requireAuth, requireRole("host"), async (req, res, next) => {
   try {
     const { call, channelName, agoraToken } = await acceptCall(parseCallId(req.params.id), req.user!.sub);
-    res.json({ callId: call.id, status: call.status, channelName, secureMode: true, agoraToken });
+    res.json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, agoraToken });
   } catch (err) {
     next(err);
   }
@@ -87,6 +90,18 @@ callsRouter.post("/calls/:id/end", requireAuth, async (req, res, next) => {
       totalAmountPaise: call.totalAmountPaise,
       totalBeans: call.totalBeans,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const ratingSchema = z.object({ stars: z.number().int().min(1).max(5) });
+
+callsRouter.post("/calls/:id/rating", requireAuth, validateBody(ratingSchema), async (req, res, next) => {
+  try {
+    const { stars } = req.body as z.infer<typeof ratingSchema>;
+    const rating = await submitRating(parseCallId(req.params.id), req.user!.sub, stars);
+    res.status(201).json(rating);
   } catch (err) {
     next(err);
   }

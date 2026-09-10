@@ -27,6 +27,18 @@ export async function requestOtp(phone: string): Promise<{ devCode?: string }> {
 }
 
 export async function verifyOtp(phone: string, code: string): Promise<void> {
+  // Dev-only bypass (env.ts's OTP_BYPASS_VERIFICATION) — while the frontend
+  // apps have no real OTP/SMS delivery wired up, this lets any phone + any
+  // 6-digit code succeed without ever calling /otp/request first. Explicitly
+  // scoped to "development" only, same convention as OTP_REAL_SMS_IN_DEV in
+  // otpSender.ts — never in production, and never in tests either (the test
+  // suite asserts real wrong-code/attempts behavior, and .env's dev-only
+  // settings are still loaded when NODE_ENV=test, so this can't just check
+  // "not production").
+  if (env.NODE_ENV === "development" && env.OTP_BYPASS_VERIFICATION) {
+    return;
+  }
+
   const [record] = await db
     .select()
     .from(otpCodes)

@@ -43,6 +43,17 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
+  // Dev-only escape hatch while the frontend apps have no real OTP/SMS
+  // delivery wired up yet: when on, POST /auth/otp/verify accepts any
+  // phone + any 6-digit code (otp.service.ts's verifyOtp skips the actual
+  // check entirely). Off by default so existing wrong-code/attempts tests
+  // stay meaningful; hard-disabled in production regardless of this value,
+  // same belt-and-suspenders convention as every other dev escape hatch
+  // in this file (see OTP_REAL_SMS_IN_DEV above).
+  OTP_BYPASS_VERIFICATION: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
   // Optional as a group, same convention as the Twilio vars above — object
   // storage (KYC uploads) simply isn't available if these are missing;
   // s3.ts fails loudly on first use rather than pretending to work.

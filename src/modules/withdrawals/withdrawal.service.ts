@@ -1,17 +1,11 @@
 import { and, count, desc, eq, gte, lte } from "drizzle-orm";
 import { db } from "../../db/client";
-import {
-  hostProfiles,
-  moderationReports,
-  users,
-  withdrawalPolicyConfigs,
-  withdrawalRequests,
-  withdrawalSlabs,
-} from "../../db/schema";
+import { moderationReports, users, withdrawalPolicyConfigs, withdrawalRequests, withdrawalSlabs } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { initiatePayout } from "../../lib/payout";
 import { sendPushNotification } from "../../lib/push";
 import { emitToUser, isUserConnected } from "../../realtime/socket";
+import { getPrimaryPayoutMethod } from "../hosts/payoutMethods.service";
 import { creditHostBeans, debitHostBeans } from "../wallet/wallet.service";
 
 type WithdrawalRequest = typeof withdrawalRequests.$inferSelect;
@@ -86,7 +80,7 @@ export async function getWithdrawalDetailForAdmin(id: string) {
   if (!request) throw new AppError(404, "Withdrawal request not found");
 
   const [host] = await db.select().from(users).where(eq(users.id, request.hostId)).limit(1);
-  const [hostProfile] = await db.select().from(hostProfiles).where(eq(hostProfiles.userId, request.hostId)).limit(1);
+  const primaryPayoutMethod = await getPrimaryPayoutMethod(request.hostId);
   const policy = await getActiveWithdrawalPolicy();
 
   const [{ value: openReportCount }] = await db
@@ -105,7 +99,7 @@ export async function getWithdrawalDetailForAdmin(id: string) {
     host: host ? { id: host.id, phone: host.phone, email: host.email, name: host.name } : null,
     verification: {
       kycApproved: host?.kycStatus === "approved",
-      payoutDetailsOnFile: Boolean(hostProfile?.payoutDetails),
+      payoutDetailsOnFile: Boolean(primaryPayoutMethod),
       aboveMinimumAmount: request.convertedAmountPaise >= policy.minAmountPaise,
       noOpenModerationReports: openReportCount === 0,
     },
@@ -119,8 +113,8 @@ export async function requestWithdrawal(hostId: string, beans: number): Promise<
   if (!host) throw new AppError(404, "Host not found");
   if (host.kycStatus !== "approved") throw new AppError(403, "KYC must be approved before requesting a withdrawal");
 
-  const [hostProfile] = await db.select().from(hostProfiles).where(eq(hostProfiles.userId, hostId)).limit(1);
-  if (!hostProfile?.payoutDetails) throw new AppError(403, "Add payout details before requesting a withdrawal");
+  const primaryPayoutMethod = await getPrimaryPayoutMethod(hostId);
+  if (!primaryPayoutMethod) throw new AppError(403, "Add payout details before requesting a withdrawal");
 
   const policy = await getActiveWithdrawalPolicy();
   const slab = await getActiveSlabForBeans(beans);
@@ -128,6 +122,17 @@ export async function requestWithdrawal(hostId: string, beans: number): Promise<
 
   if (convertedAmountPaise < policy.minAmountPaise) {
     throw new AppError(400, `Minimum withdrawal amount is ${policy.minAmountPaise} paise`);
+  }
+
+  // Confirm-withdrawal screen's fee breakdown (Host app design follow-up):
+  // a flat processing fee plus TDS, both deducted from the payout only —
+  // never from the beans debited below, which always cover the full
+  // requested amount regardless of what the host actually receives net.
+  const processingFeePaise = policy.processingFeePaise;
+  const tdsPaise = Math.floor((convertedAmountPaise * policy.tdsBasisPoints) / 10_000);
+  const netPayoutPaise = convertedAmountPaise - processingFeePaise - tdsPaise;
+  if (netPayoutPaise <= 0) {
+    throw new AppError(400, "Withdrawal amount is too small to cover fees");
   }
 
   const windowStart = new Date(Date.now() - policy.windowDays * 24 * 60 * 60 * 1000);
@@ -149,8 +154,11 @@ export async function requestWithdrawal(hostId: string, beans: number): Promise<
         beans,
         paisePerBeanSnapshot: slab.paisePerBean,
         convertedAmountPaise,
+        processingFeePaise,
+        tdsPaise,
+        netPayoutPaise,
         status: autoApprove ? "approved" : "pending",
-        payoutDetailsSnapshot: hostProfile.payoutDetails as string,
+        payoutDetailsSnapshot: primaryPayoutMethod.detailsJson,
       })
       .returning();
 
@@ -171,7 +179,7 @@ async function initiatePayoutForRequest(request: WithdrawalRequest): Promise<Wit
   const { payoutTxnId } = await initiatePayout({
     withdrawalRequestId: request.id,
     hostId: request.hostId,
-    amountPaise: request.convertedAmountPaise,
+    amountPaise: request.netPayoutPaise,
     payoutDetails: request.payoutDetailsSnapshot,
   });
 

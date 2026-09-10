@@ -1,0 +1,922 @@
+{
+  "info": {
+    "_postman_id": "b1f2a3c4-1234-4a5b-9c6d-host000000001",
+    "name": "TriloPlan Host API",
+    "description": "Backend API surface for the Host app only — every endpoint a Host-app screen (Figma review, Host app design follow-up) actually calls. Split out of the old single combined collection so each frontend team has its own collection scoped to what it needs. See CLAUDE.md, BACKEND_PLAN.md and BRD.md in the repo for full backend context.\n\nCompanion collections: `TriloPlan-User.postman_collection.json` (seeded with what's built for the User role so far) and `TriloPlan-Admin.postman_collection.json` (everything under `/admin/*`).\n\n## OTP login while there's no real SMS yet\nThe backend has a dev-only bypass (`OTP_BYPASS_VERIFICATION=true` in the server's `.env`, off in production): `POST /auth/otp/verify` accepts ANY phone + ANY 6-digit code, no prior `/otp/request` call required. This collection still calls `/otp/request` first and saves `devCode` (harmless either way), then verifies with it — swap in any 6 digits and it still works while the bypass is on.\n\n## Two identities in this collection\nSeveral Host flows need a counterpart USER to have already done something (called, chatted, gifted) before the Host side has anything to act on — so this collection also logs in a throwaway USER identity in the **Setup** folder purely to drive that, kept separate from the main `hostAccessToken` identity under test. A minimal **Admin — KYC Approval** step is included too, since `Withdrawals` needs the host's KYC approved first (BR-EARN-03) and that's an admin action — same dependency the original combined collection had.\n\n## Recommended run order (Collection Runner-safe, top to bottom)\nSetup → Auth — Host Login → Profile (Me) → Presence → Admin — KYC Approval → Calls → Chat → Gifts → Live Broadcasting → Withdrawals → Earnings → Moderation → Auth — Session.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "noauth" },
+  "event": [],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000", "type": "string" },
+    { "key": "userPhone", "value": "+919876510001", "type": "string", "description": "Counterpart USER identity (Setup folder) used to drive calls/chat/gifts toward the host under test." },
+    { "key": "userDevCode", "value": "", "type": "string" },
+    { "key": "userAccessToken", "value": "", "type": "string" },
+    { "key": "userId", "value": "", "type": "string" },
+    { "key": "hostPhone", "value": "+919876510555", "type": "string" },
+    { "key": "hostDevCode", "value": "", "type": "string" },
+    { "key": "hostAccessToken", "value": "", "type": "string" },
+    { "key": "hostRefreshToken", "value": "", "type": "string" },
+    { "key": "hostId", "value": "", "type": "string" },
+    { "key": "adminEmail", "value": "admin@triloplan.com", "type": "string", "description": "Must match an already-seeded ADMIN account (`npm run db:seed-admin -- <phone> <email> <password>`)." },
+    { "key": "adminPassword", "value": "ChangeMe123!", "type": "string" },
+    { "key": "adminAccessToken", "value": "", "type": "string" },
+    { "key": "kycUploadUrl", "value": "", "type": "string" },
+    { "key": "kycDocumentKey", "value": "", "type": "string" },
+    { "key": "galleryItemId", "value": "", "type": "string" },
+    { "key": "payoutMethodId", "value": "", "type": "string" },
+    { "key": "callId", "value": "", "type": "string" },
+    { "key": "chatConversationId", "value": "", "type": "string" },
+    { "key": "giftId", "value": "", "type": "string" },
+    { "key": "liveBroadcastId", "value": "", "type": "string" },
+    { "key": "withdrawalId", "value": "", "type": "string" },
+    { "key": "reportId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Setup — Counterpart User",
+      "description": "A throwaway USER identity, funded with wallet balance, purely so the Host flows below (accept a call, receive a chat message/gift, rate someone) have something real to act on.",
+      "item": [
+        {
+          "name": "1. Request OTP — Counterpart User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{userPhone}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.devCode) { pm.collectionVariables.set(\"userDevCode\", jsonData.devCode); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Verify OTP — Counterpart User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{userPhone}}\",\n  \"code\": \"{{userDevCode}}\",\n  \"role\": \"user\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] },
+            "description": "Any 6-digit code works while OTP_BYPASS_VERIFICATION is on. Saves userAccessToken/userId."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) {",
+                  "    pm.collectionVariables.set(\"userAccessToken\", jsonData.accessToken);",
+                  "    pm.collectionVariables.set(\"userId\", jsonData.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Dev-Credit Counterpart User's Wallet",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"amountPaise\": 500000\n}" },
+            "url": { "raw": "{{baseUrl}}/wallet/dev-credit", "host": ["{{baseUrl}}"], "path": ["wallet", "dev-credit"] },
+            "description": "Non-prod escape hatch (no payment gateway wired up yet) — funds ₹5,000 so the counterpart user can call/gift the host under test."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth — Host Login",
+      "item": [
+        {
+          "name": "1. Request OTP — Host Phone",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{hostPhone}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] },
+            "description": "Matches the app's \"Your number / Send code\" screen."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.devCode) { pm.collectionVariables.set(\"hostDevCode\", jsonData.devCode); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Verify OTP — Host App",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{hostPhone}}\",\n  \"code\": \"{{hostDevCode}}\",\n  \"role\": \"host\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] },
+            "description": "Matches the app's \"Verify number / Enter the code\" screen. Any 6-digit code works while OTP_BYPASS_VERIFICATION is on — creates a new HOST account on first-ever verify for this phone."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) {",
+                  "    pm.collectionVariables.set(\"hostAccessToken\", jsonData.accessToken);",
+                  "    pm.collectionVariables.set(\"hostRefreshToken\", jsonData.refreshToken);",
+                  "    pm.collectionVariables.set(\"hostId\", jsonData.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Profile (Me)",
+      "item": [
+        {
+          "name": "Get My Profile",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] },
+            "description": "Profile screen header (avatar, @handle, rating, calls) — hostProfile now includes `rating: {average, count}`."
+          }
+        },
+        {
+          "name": "Update My Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Ayesha\",\n  \"email\": \"host@mail.com\"\n}" },
+            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] },
+            "description": "Edit profile screen's name/email fields."
+          }
+        },
+        {
+          "name": "Update Host Profile — Bio, Gallery, Rates, Toggles",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bio\": \"Late night chats, music and good vibes\",\n  \"ratePerMinutePaise\": 2400,\n  \"voiceRatePerMinutePaise\": 1200,\n  \"privateLiveRatePerMinutePaise\": 3000,\n  \"autoAcceptCalls\": true,\n  \"voiceCallsOnlyAfterMidnight\": false\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/me/host-profile", "host": ["{{baseUrl}}"], "path": ["me", "host-profile"] },
+            "description": "Rate Settings screen's \"Save rates\" action — video/voice/private-live per-minute rates (paise) plus the two availability toggles. Must be called before Calls (below) can succeed — a call needs the relevant per-type rate set."
+          }
+        },
+        {
+          "name": "1. Get KYC Upload URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"contentType\": \"application/pdf\"\n}" },
+            "url": { "raw": "{{baseUrl}}/me/kyc/upload-url", "host": ["{{baseUrl}}"], "path": ["me", "kyc", "upload-url"] },
+            "description": "\"Upload documents\" screen. Saves kycUploadUrl/kycDocumentKey."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"kycUploadUrl\", jsonData.uploadUrl);",
+                  "pm.collectionVariables.set(\"kycDocumentKey\", jsonData.key);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Upload Document to S3",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/pdf", "type": "text" }],
+            "body": { "mode": "raw", "raw": "This is placeholder file content for testing the upload flow." },
+            "url": { "raw": "{{kycUploadUrl}}", "host": ["{{kycUploadUrl}}"] },
+            "description": "Goes straight to S3 with the presigned URL from step 1 — no Authorization header needed."
+          }
+        },
+        {
+          "name": "3. Submit KYC Document",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documents\": [\n    { \"documentType\": \"id_front\", \"key\": \"{{kycDocumentKey}}\" }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/me/kyc", "host": ["{{baseUrl}}"], "path": ["me", "kyc"] }
+          }
+        },
+        {
+          "name": "4. Get My KYC Status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me/kyc", "host": ["{{baseUrl}}"], "path": ["me", "kyc"] },
+            "description": "\"Under review\" / \"Verified\" / \"Verification rejected\" screens."
+          }
+        },
+        {
+          "name": "Add Gallery Item",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"mediaType\": \"photo\",\n  \"url\": \"https://example.com/photo.jpg\"\n}" },
+            "url": { "raw": "{{baseUrl}}/me/host-profile/gallery", "host": ["{{baseUrl}}"], "path": ["me", "host-profile", "gallery"] },
+            "description": "Gallery screen's \"+\" tile."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"galleryItemId\", jsonData.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List My Gallery",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me/host-profile/gallery", "host": ["{{baseUrl}}"], "path": ["me", "host-profile", "gallery"] }
+          }
+        },
+        {
+          "name": "Delete Gallery Item",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/me/host-profile/gallery/{{galleryItemId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["me", "host-profile", "gallery", "{{galleryItemId}}"]
+            }
+          }
+        },
+        {
+          "name": "1. Add Payout Method — Bank (Primary)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"bank\",\n  \"accountHolderName\": \"Ayesha Khan\",\n  \"accountNumber\": \"1234567894821\",\n  \"ifsc\": \"HDFC0001234\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/me/payout-methods", "host": ["{{baseUrl}}"], "path": ["me", "payout-methods"] },
+            "description": "\"Add New Payout Account\" screen — the first payout method added becomes primary automatically."
+          }
+        },
+        {
+          "name": "2. Add Payout Method — UPI (Backup)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"type\": \"upi\",\n  \"vpa\": \"ayesha@upi\"\n}" },
+            "url": { "raw": "{{baseUrl}}/me/payout-methods", "host": ["{{baseUrl}}"], "path": ["me", "payout-methods"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"payoutMethodId\", jsonData.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. List Payout Methods",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me/payout-methods", "host": ["{{baseUrl}}"], "path": ["me", "payout-methods"] },
+            "description": "Payout details screen — primary bank account + backup UPI."
+          }
+        },
+        {
+          "name": "4. Set Primary Payout Method",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/me/payout-methods/{{payoutMethodId}}/primary",
+              "host": ["{{baseUrl}}"],
+              "path": ["me", "payout-methods", "{{payoutMethodId}}", "primary"]
+            },
+            "description": "Left as the UPI method being promoted — reverted implicitly by not running again, since Withdrawals below just needs *a* primary method on file, either works."
+          }
+        },
+        {
+          "name": "Get Notification Preferences",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me/notification-preferences", "host": ["{{baseUrl}}"], "path": ["me", "notification-preferences"] },
+            "description": "Notification Settings screen — defaults match the toggle states shown in the design."
+          }
+        },
+        {
+          "name": "Update Notification Preferences",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"callReminders\": true,\n  \"weeklyEarningsSummary\": true,\n  \"dndEnabled\": false\n}" },
+            "url": { "raw": "{{baseUrl}}/me/notification-preferences", "host": ["{{baseUrl}}"], "path": ["me", "notification-preferences"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Presence",
+      "item": [
+        {
+          "name": "Go Online",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"isOnline\": true\n}" },
+            "url": { "raw": "{{baseUrl}}/me/presence", "host": ["{{baseUrl}}"], "path": ["me", "presence"] },
+            "description": "Home screen's \"Go online\" toggle. Must be online before the counterpart user can call this host."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin — KYC Approval (dependency)",
+      "description": "Minimal cross-cutting dependency: Withdrawals below requires this host's KYC to already be approved (BR-EARN-03), and only an admin can do that.",
+      "item": [
+        {
+          "name": "1. Admin Login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/admin/login", "host": ["{{baseUrl}}"], "path": ["auth", "admin", "login"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) { pm.collectionVariables.set(\"adminAccessToken\", jsonData.accessToken); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Approve This Host's KYC",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approve\"\n}" },
+            "url": { "raw": "{{baseUrl}}/admin/kyc/{{hostId}}/decision", "host": ["{{baseUrl}}"], "path": ["admin", "kyc", "{{hostId}}", "decision"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Calls",
+      "item": [
+        {
+          "name": "1. (User) Initiate Call → This Host",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"hostId\": \"{{hostId}}\",\n  \"type\": \"video\"\n}" },
+            "url": { "raw": "{{baseUrl}}/calls", "host": ["{{baseUrl}}"], "path": ["calls"] },
+            "description": "Run by the counterpart user so the host has an incoming call to accept — matches the \"Incoming video call\" screen from the host's side."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"callId\", jsonData.callId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Accept Call",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/calls/{{callId}}/accept", "host": ["{{baseUrl}}"], "path": ["calls", "{{callId}}", "accept"] }
+          }
+        },
+        {
+          "name": "3. Get Call",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/calls/{{callId}}", "host": ["{{baseUrl}}"], "path": ["calls", "{{callId}}"] }
+          }
+        },
+        {
+          "name": "4. End Call",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/calls/{{callId}}/end", "host": ["{{baseUrl}}"], "path": ["calls", "{{callId}}", "end"] },
+            "description": "\"Call ended\" screen's summary numbers come from this response."
+          }
+        },
+        {
+          "name": "5. Submit Rating",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"stars\": 5\n}" },
+            "url": { "raw": "{{baseUrl}}/calls/{{callId}}/rating", "host": ["{{baseUrl}}"], "path": ["calls", "{{callId}}", "rating"] },
+            "description": "\"Rate this call\" stars on the call-ended screen. Either participant can rate the other once."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "1. Send Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"recipientId\": \"{{userId}}\",\n  \"content\": \"Hey! Are you free for a quick call?\"\n}" },
+            "url": { "raw": "{{baseUrl}}/chat/messages", "host": ["{{baseUrl}}"], "path": ["chat", "messages"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"chatConversationId\", jsonData.conversationId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. List My Conversations",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/chat/conversations", "host": ["{{baseUrl}}"], "path": ["chat", "conversations"] },
+            "description": "Messages list screen."
+          }
+        },
+        {
+          "name": "3. Get Conversation Messages",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/chat/conversations/{{chatConversationId}}/messages?page=1&pageSize=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["chat", "conversations", "{{chatConversationId}}", "messages"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "pageSize", "value": "50" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Gifts",
+      "item": [
+        {
+          "name": "1. List Gift Catalog",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/gifts", "host": ["{{baseUrl}}"], "path": ["gifts"] },
+            "description": "\"Ask for a gift\" picker's catalog."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "var crown = jsonData.gifts.find(function (g) { return g.name === \"Crown\"; });",
+                  "if (crown) { pm.collectionVariables.set(\"giftId\", crown.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Request Gift (Host asks User)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"suggestedGiftId\": \"{{giftId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/gifts/request", "host": ["{{baseUrl}}"], "path": ["gifts", "request"] },
+            "description": "\"Ask for a gift\" send action — a real-time prompt only, never moves money itself."
+          }
+        },
+        {
+          "name": "3. (User) Send Gift to This Host",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"recipientId\": \"{{hostId}}\",\n  \"giftId\": \"{{giftId}}\",\n  \"context\": \"chat\",\n  \"contextId\": \"{{chatConversationId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/gifts/send", "host": ["{{baseUrl}}"], "path": ["gifts", "send"] },
+            "description": "Funds the host's bean balance so Withdrawals below has something to withdraw."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Live Broadcasting",
+      "item": [
+        {
+          "name": "Get Adult Mode Status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/live/adult-mode", "host": ["{{baseUrl}}"], "path": ["live", "adult-mode"] }
+          }
+        },
+        {
+          "name": "1. Start Broadcast",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"title\": \"Late night chill chat\"\n}" },
+            "url": { "raw": "{{baseUrl}}/live/broadcasts", "host": ["{{baseUrl}}"], "path": ["live", "broadcasts"] },
+            "description": "\"Go live\" screen's \"Start broadcast\" action."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"liveBroadcastId\", jsonData.broadcastId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Send Live Chat Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"content\": \"Thanks for tuning in!\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/live/broadcasts/{{liveBroadcastId}}/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["live", "broadcasts", "{{liveBroadcastId}}", "chat"]
+            }
+          }
+        },
+        {
+          "name": "3. End Broadcast",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/live/broadcasts/{{liveBroadcastId}}/end",
+              "host": ["{{baseUrl}}"],
+              "path": ["live", "broadcasts", "{{liveBroadcastId}}", "end"]
+            },
+            "description": "\"Stream ended\" summary screen comes from this + the History/Earnings endpoints below."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Withdrawals",
+      "item": [
+        {
+          "name": "1. Request Withdrawal",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"beans\": 5000\n}" },
+            "url": { "raw": "{{baseUrl}}/withdrawals", "host": ["{{baseUrl}}"], "path": ["withdrawals"] },
+            "description": "Confirm-withdrawal screen — response now includes processingFeePaise/tdsPaise/netPayoutPaise alongside the existing convertedAmountPaise (gross)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) { pm.collectionVariables.set(\"withdrawalId\", jsonData.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. List My Withdrawals",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/withdrawals", "host": ["{{baseUrl}}"], "path": ["withdrawals"] }
+          }
+        },
+        {
+          "name": "3. Get Withdrawal By Id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/withdrawals/{{withdrawalId}}", "host": ["{{baseUrl}}"], "path": ["withdrawals", "{{withdrawalId}}"] }
+          }
+        },
+        {
+          "name": "4. Resolve Payout — Paid (dev-only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"paid\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/withdrawals/{{withdrawalId}}/dev-resolve-payout",
+              "host": ["{{baseUrl}}"],
+              "path": ["withdrawals", "{{withdrawalId}}", "dev-resolve-payout"]
+            },
+            "description": "Stands in for the payout gateway's webhook — no real gateway configured yet. \"Paid out\" screen."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Earnings",
+      "item": [
+        {
+          "name": "Get Home Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me/dashboard", "host": ["{{baseUrl}}"], "path": ["me", "dashboard"] },
+            "description": "Home screen — today's earnings/calls, rating, recent calls."
+          }
+        },
+        {
+          "name": "Get Earnings Summary",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me/earnings", "host": ["{{baseUrl}}"], "path": ["me", "earnings"] },
+            "description": "Earnings tab — balance, calls/gifts/live subtotals, last-7-days chart."
+          }
+        },
+        {
+          "name": "Get Earnings Breakdown",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me/earnings/breakdown", "host": ["{{baseUrl}}"], "path": ["me", "earnings", "breakdown"] },
+            "description": "Breakdown screen — gross by source (video/voice/gifts/live), commission + TDS deductions, net payable. Defaults to the current calendar month; pass ?from=&to= (ISO datetimes) for a custom period."
+          }
+        },
+        {
+          "name": "Get History — All",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/me/history?type=all&page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["me", "history"],
+              "query": [{ "key": "type", "value": "all" }, { "key": "page", "value": "1" }, { "key": "pageSize", "value": "20" }]
+            },
+            "description": "History screen's \"All\" tab — merged calls/gifts/live feed. type can also be calls|gifts|live."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Moderation",
+      "item": [
+        {
+          "name": "1. Block User",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"userId\": \"{{userId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/moderation/blocks", "host": ["{{baseUrl}}"], "path": ["moderation", "blocks"] },
+            "description": "\"Block Rahul?\" confirmation. From this point on, calls/messages between the two are rejected."
+          }
+        },
+        {
+          "name": "2. List Blocked",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/moderation/blocks", "host": ["{{baseUrl}}"], "path": ["moderation", "blocks"] },
+            "description": "Profile → Blocked creators screen."
+          }
+        },
+        {
+          "name": "3. Unblock User",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/moderation/blocks/{{userId}}", "host": ["{{baseUrl}}"], "path": ["moderation", "blocks", "{{userId}}"] },
+            "description": "Undoes step 1 so this collection can be re-run without a stale block."
+          }
+        },
+        {
+          "name": "4. File Report (Host)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"targetType\": \"user\",\n  \"targetId\": \"{{userId}}\",\n  \"reason\": \"Harassment or threats\"\n}" },
+            "url": { "raw": "{{baseUrl}}/moderation/reports", "host": ["{{baseUrl}}"], "path": ["moderation", "reports"] },
+            "description": "\"Report user\" screen's reason list maps to the free-text `reason` field."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) { pm.collectionVariables.set(\"reportId\", jsonData.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Log Capture Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"context\": \"call\",\n  \"contextId\": \"{{callId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/moderation/capture-event", "host": ["{{baseUrl}}"], "path": ["moderation", "capture-event"] },
+            "description": "\"Screenshot blocked\" screen calls this to log the attempt."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth — Session",
+      "item": [
+        {
+          "name": "1. Refresh Access Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{hostRefreshToken}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "token", "refresh"] },
+            "description": "\"Session expired / Log in again\" screen's underlying mechanism."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) {",
+                  "    pm.collectionVariables.set(\"hostAccessToken\", jsonData.accessToken);",
+                  "    pm.collectionVariables.set(\"hostRefreshToken\", jsonData.refreshToken);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{hostRefreshToken}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth", "logout"] },
+            "description": "\"Logging Out?\" confirmation sheet."
+          }
+        }
+      ]
+    }
+  ]
+}

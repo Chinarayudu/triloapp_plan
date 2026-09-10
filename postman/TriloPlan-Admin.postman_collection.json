@@ -1,0 +1,869 @@
+{
+  "info": {
+    "_postman_id": "d3b4c5e6-3456-4c7d-8e9f-admin00000003",
+    "name": "TriloPlan Admin API",
+    "description": "Backend API surface for the Admin app — everything under `/admin/*` plus admin login. See CLAUDE.md, BACKEND_PLAN.md and BRD.md in the repo for full backend context.\n\nCompanion collections: `TriloPlan-Host.postman_collection.json` and `TriloPlan-User.postman_collection.json`.\n\n## Prerequisite\nAn ADMIN account must already exist — `npm run db:seed-admin -- <phone> <email> <password>` (out-of-band provisioning; there is no admin signup flow by design). Set `adminEmail`/`adminPassword` below to match.\n\n## OTP login while there's no real SMS yet\nThe backend has a dev-only bypass (`OTP_BYPASS_VERIFICATION=true` in the server's `.env`, off in production): `POST /auth/otp/verify` accepts ANY phone + ANY 6-digit code. Used here only for the Setup folder's throwaway host/user and the sub-admin's OTP login.\n\n## Recommended run order (Collection Runner-safe, top to bottom)\nAdmin — Login & Sub-Admins → Setup — Test Host & User → KYC → Withdrawals (Admin) → Pricing & Economics Config → Users & Hosts → Moderation → Live & Broadcast Messages → Adult Mode → Audit, Dashboard & Reconciliation.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "noauth" },
+  "event": [],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000", "type": "string" },
+    { "key": "adminEmail", "value": "admin@triloplan.com", "type": "string" },
+    { "key": "adminPassword", "value": "ChangeMe123!", "type": "string" },
+    { "key": "adminAccessToken", "value": "", "type": "string" },
+    { "key": "adminId", "value": "", "type": "string" },
+    { "key": "subAdminPhone", "value": "+919876530998", "type": "string" },
+    { "key": "subAdminDevCode", "value": "", "type": "string" },
+    { "key": "subAdminAccessToken", "value": "", "type": "string" },
+    { "key": "subAdminId", "value": "", "type": "string" },
+    { "key": "subAdminEmail", "value": "subadmin@triloplan.com", "type": "string" },
+    { "key": "subAdminPassword", "value": "ChangeMe123!", "type": "string" },
+    { "key": "hostPhone", "value": "+919876530555", "type": "string" },
+    { "key": "hostDevCode", "value": "", "type": "string" },
+    { "key": "hostAccessToken", "value": "", "type": "string" },
+    { "key": "hostId", "value": "", "type": "string" },
+    { "key": "userPhone", "value": "+919876530001", "type": "string" },
+    { "key": "userDevCode", "value": "", "type": "string" },
+    { "key": "userAccessToken", "value": "", "type": "string" },
+    { "key": "userId", "value": "", "type": "string" },
+    { "key": "kycUploadUrl", "value": "", "type": "string" },
+    { "key": "kycDocumentKey", "value": "", "type": "string" },
+    { "key": "withdrawalId", "value": "", "type": "string" },
+    { "key": "adminGiftId", "value": "", "type": "string" },
+    { "key": "galleryItemId", "value": "", "type": "string" },
+    { "key": "liveBroadcastId", "value": "", "type": "string" },
+    { "key": "broadcastMessageId", "value": "", "type": "string" },
+    { "key": "reportId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Admin — Login & Sub-Admins",
+      "item": [
+        {
+          "name": "1. Admin Login — Email + Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/admin/login", "host": ["{{baseUrl}}"], "path": ["auth", "admin", "login"] },
+            "description": "The design's primary admin login method."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) {",
+                  "    pm.collectionVariables.set(\"adminAccessToken\", jsonData.accessToken);",
+                  "    pm.collectionVariables.set(\"adminId\", jsonData.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Create Sub-Admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{subAdminPhone}}\",\n  \"email\": \"{{subAdminEmail}}\",\n  \"password\": \"{{subAdminPassword}}\",\n  \"permissions\": [\"finance\", \"moderation\", \"analytics\"]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/admin/sub-admins", "host": ["{{baseUrl}}"], "path": ["admin", "sub-admins"] },
+            "description": "ADMIN-only, not delegable to another sub-admin."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["var jsonData = pm.response.json();", "if (jsonData.id) { pm.collectionVariables.set(\"subAdminId\", jsonData.id); }"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Request OTP — Sub-Admin Phone",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{subAdminPhone}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["var jsonData = pm.response.json();", "if (jsonData.devCode) { pm.collectionVariables.set(\"subAdminDevCode\", jsonData.devCode); }"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Verify OTP — Sub-Admin",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{subAdminPhone}}\",\n  \"code\": \"{{subAdminDevCode}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] },
+            "description": "Sub-admins/admins can also log in via phone+OTP (an additional path, not a replacement for email+password)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["var jsonData = pm.response.json();", "if (jsonData.accessToken) { pm.collectionVariables.set(\"subAdminAccessToken\", jsonData.accessToken); }"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. List Sub-Admins",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/sub-admins", "host": ["{{baseUrl}}"], "path": ["admin", "sub-admins"] }
+          }
+        },
+        {
+          "name": "6. Update Sub-Admin Permissions",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"permissions\": [\"moderation\", \"analytics\"]\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/admin/sub-admins/{{subAdminId}}/permissions",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "sub-admins", "{{subAdminId}}", "permissions"]
+            },
+            "description": "Takes effect on the sub-admin's very next request, not their next login."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Setup — Test Host & User",
+      "description": "A throwaway HOST (with KYC docs submitted) and USER, so the rest of this collection has real accounts to review/approve/suspend/roster.",
+      "item": [
+        {
+          "name": "1. Request OTP — Test Host",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{hostPhone}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": ["var jsonData = pm.response.json();", "if (jsonData.devCode) { pm.collectionVariables.set(\"hostDevCode\", jsonData.devCode); }"] }
+            }
+          ]
+        },
+        {
+          "name": "2. Verify OTP — Test Host",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{hostPhone}}\",\n  \"code\": \"{{hostDevCode}}\",\n  \"role\": \"host\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) {",
+                  "    pm.collectionVariables.set(\"hostAccessToken\", jsonData.accessToken);",
+                  "    pm.collectionVariables.set(\"hostId\", jsonData.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Get KYC Upload URL (Host)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"contentType\": \"application/pdf\"\n}" },
+            "url": { "raw": "{{baseUrl}}/me/kyc/upload-url", "host": ["{{baseUrl}}"], "path": ["me", "kyc", "upload-url"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["var jsonData = pm.response.json();", "pm.collectionVariables.set(\"kycUploadUrl\", jsonData.uploadUrl);", "pm.collectionVariables.set(\"kycDocumentKey\", jsonData.key);"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Upload Document to S3",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/pdf", "type": "text" }],
+            "body": { "mode": "raw", "raw": "This is placeholder file content for testing the upload flow." },
+            "url": { "raw": "{{kycUploadUrl}}", "host": ["{{kycUploadUrl}}"] }
+          }
+        },
+        {
+          "name": "5. Submit KYC Document (Host)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"documents\": [\n    { \"documentType\": \"id_front\", \"key\": \"{{kycDocumentKey}}\" }\n  ]\n}" },
+            "url": { "raw": "{{baseUrl}}/me/kyc", "host": ["{{baseUrl}}"], "path": ["me", "kyc"] }
+          }
+        },
+        {
+          "name": "6. Add Payout Method (Host)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"type\": \"upi\",\n  \"vpa\": \"testhost@upi\"\n}" },
+            "url": { "raw": "{{baseUrl}}/me/payout-methods", "host": ["{{baseUrl}}"], "path": ["me", "payout-methods"] },
+            "description": "Needed for the Withdrawals (Admin) folder's verification checklist below."
+          }
+        },
+        {
+          "name": "7. Add Gallery Item (Host)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"mediaType\": \"photo\",\n  \"url\": \"https://example.com/photo.jpg\"\n}" },
+            "url": { "raw": "{{baseUrl}}/me/host-profile/gallery", "host": ["{{baseUrl}}"], "path": ["me", "host-profile", "gallery"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": ["var jsonData = pm.response.json();", "if (jsonData.id) { pm.collectionVariables.set(\"galleryItemId\", jsonData.id); }"] }
+            }
+          ]
+        },
+        {
+          "name": "8. Request OTP — Test User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{userPhone}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": ["var jsonData = pm.response.json();", "if (jsonData.devCode) { pm.collectionVariables.set(\"userDevCode\", jsonData.devCode); }"] }
+            }
+          ]
+        },
+        {
+          "name": "9. Verify OTP — Test User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{userPhone}}\",\n  \"code\": \"{{userDevCode}}\",\n  \"role\": \"user\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) {",
+                  "    pm.collectionVariables.set(\"userAccessToken\", jsonData.accessToken);",
+                  "    pm.collectionVariables.set(\"userId\", jsonData.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. File a Report Against Test Host (for the Moderation folder)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"targetType\": \"host\",\n  \"targetId\": \"{{hostId}}\",\n  \"reason\": \"Suspicious activity\"\n}" },
+            "url": { "raw": "{{baseUrl}}/moderation/reports", "host": ["{{baseUrl}}"], "path": ["moderation", "reports"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": ["var jsonData = pm.response.json();", "if (jsonData.id) { pm.collectionVariables.set(\"reportId\", jsonData.id); }"] }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "KYC",
+      "item": [
+        {
+          "name": "1. List Pending KYC",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/kyc/pending", "host": ["{{baseUrl}}"], "path": ["admin", "kyc", "pending"] }
+          }
+        },
+        {
+          "name": "2. Get KYC Submission For Review",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/kyc/{{hostId}}", "host": ["{{baseUrl}}"], "path": ["admin", "kyc", "{{hostId}}"] },
+            "description": "\"Submitted documents\" review screen — every document on the latest pending attempt with a fresh 5-minute presigned view URL."
+          }
+        },
+        {
+          "name": "3. Decide KYC — Approve",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approve\"\n}" },
+            "url": { "raw": "{{baseUrl}}/admin/kyc/{{hostId}}/decision", "host": ["{{baseUrl}}"], "path": ["admin", "kyc", "{{hostId}}", "decision"] },
+            "description": "decision can also be \"reject\" with a rejectionReason. Approving also sets ageVerified when a dob is on file (BR-ACC-04)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Withdrawals (Admin)",
+      "item": [
+        {
+          "name": "1. (Host) Fund Beans via a Gift",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"amountPaise\": 500000\n}" },
+            "url": { "raw": "{{baseUrl}}/wallet/dev-credit", "host": ["{{baseUrl}}"], "path": ["wallet", "dev-credit"] },
+            "description": "Funds the test user first so the gift below can be sent."
+          }
+        },
+        {
+          "name": "2. List Gift Catalog",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/gifts", "host": ["{{baseUrl}}"], "path": ["gifts"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["var jsonData = pm.response.json();", "var crown = jsonData.gifts.find(function (g) { return g.name === \"Crown\"; });", "if (crown) { pm.collectionVariables.set(\"adminGiftId\", crown.id); }"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. (User) Send Gift to Test Host",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"recipientId\": \"{{hostId}}\",\n  \"giftId\": \"{{adminGiftId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/gifts/send", "host": ["{{baseUrl}}"], "path": ["gifts", "send"] }
+          }
+        },
+        {
+          "name": "4. (Host) Request Withdrawal",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"beans\": 5000\n}" },
+            "url": { "raw": "{{baseUrl}}/withdrawals", "host": ["{{baseUrl}}"], "path": ["withdrawals"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": ["var jsonData = pm.response.json();", "if (jsonData.id) { pm.collectionVariables.set(\"withdrawalId\", jsonData.id); }"] }
+            }
+          ]
+        },
+        {
+          "name": "5. List Withdrawal Queue",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/withdrawals?status=pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "withdrawals"],
+              "query": [{ "key": "status", "value": "pending" }]
+            }
+          }
+        },
+        {
+          "name": "6. Get Withdrawal Detail — Verification Checklist",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/withdrawals/{{withdrawalId}}", "host": ["{{baseUrl}}"], "path": ["admin", "withdrawals", "{{withdrawalId}}"] }
+          }
+        },
+        {
+          "name": "7. Decide Withdrawal — Approve",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approve\"\n}" },
+            "url": { "raw": "{{baseUrl}}/admin/withdrawals/{{withdrawalId}}/decision", "host": ["{{baseUrl}}"], "path": ["admin", "withdrawals", "{{withdrawalId}}", "decision"] },
+            "description": "Only meaningful if the withdrawal is still \"pending\" (i.e. beans requested exceeded the auto-approve threshold)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Pricing & Economics Config",
+      "item": [
+        {
+          "name": "1. List Commission Config",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/config/commission", "host": ["{{baseUrl}}"], "path": ["admin", "config", "commission"] }
+          }
+        },
+        {
+          "name": "2. Create Commission Config (Global)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"basisPoints\": 2000\n}" },
+            "url": { "raw": "{{baseUrl}}/admin/config/commission", "host": ["{{baseUrl}}"], "path": ["admin", "config", "commission"] }
+          }
+        },
+        {
+          "name": "3. Create Per-Host Commission Override",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"basisPoints\": 1500,\n  \"hostId\": \"{{hostId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/admin/config/commission", "host": ["{{baseUrl}}"], "path": ["admin", "config", "commission"] },
+            "description": "BR-COM-03 — a negotiated rate for one host (e.g. a top earner) without touching the global default."
+          }
+        },
+        {
+          "name": "4. List Beans Earn-Rate Config",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/config/beans-rate", "host": ["{{baseUrl}}"], "path": ["admin", "config", "beans-rate"] }
+          }
+        },
+        {
+          "name": "5. Create Beans Earn-Rate Config",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"paisePerBean\": 1\n}" },
+            "url": { "raw": "{{baseUrl}}/admin/config/beans-rate", "host": ["{{baseUrl}}"], "path": ["admin", "config", "beans-rate"] }
+          }
+        },
+        {
+          "name": "6. List Withdrawal Policy Config",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/config/withdrawal-policy", "host": ["{{baseUrl}}"], "path": ["admin", "config", "withdrawal-policy"] }
+          }
+        },
+        {
+          "name": "7. Create Withdrawal Policy Config",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"minAmountPaise\": 100000,\n  \"maxRequestsPerWindow\": 2,\n  \"windowDays\": 7,\n  \"autoApproveThresholdPaise\": 100000,\n  \"processingFeePaise\": 10000,\n  \"tdsBasisPoints\": 100\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/admin/config/withdrawal-policy", "host": ["{{baseUrl}}"], "path": ["admin", "config", "withdrawal-policy"] },
+            "description": "processingFeePaise/tdsBasisPoints are new (Host app design follow-up's confirm-withdrawal fee breakdown) — min ₹1,000, max 2/week, ₹100 flat fee, 1% TDS matches the confirm-withdrawal screen's example."
+          }
+        },
+        {
+          "name": "8. List Withdrawal Slabs Config",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/config/withdrawal-slabs", "host": ["{{baseUrl}}"], "path": ["admin", "config", "withdrawal-slabs"] }
+          }
+        },
+        {
+          "name": "9. Replace Withdrawal Slabs Config",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slabs\": [\n    { \"minBeans\": 0, \"maxBeans\": 49999, \"paisePerBean\": 1 },\n    { \"minBeans\": 50000, \"maxBeans\": null, \"paisePerBean\": 2 }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/admin/config/withdrawal-slabs", "host": ["{{baseUrl}}"], "path": ["admin", "config", "withdrawal-slabs"] },
+            "description": "Replaces the whole slab set at once (each row covers one [minBeans, maxBeans) range)."
+          }
+        },
+        {
+          "name": "10. List Gift Catalog — Admin View",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/gifts", "host": ["{{baseUrl}}"], "path": ["admin", "gifts"] }
+          }
+        },
+        {
+          "name": "11. Create Gift",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Test Gift\",\n  \"pricePaise\": 2500\n}" },
+            "url": { "raw": "{{baseUrl}}/admin/gifts", "host": ["{{baseUrl}}"], "path": ["admin", "gifts"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": ["var jsonData = pm.response.json();", "if (jsonData.id) { pm.collectionVariables.set(\"adminGiftId\", jsonData.id); }"] }
+            }
+          ]
+        },
+        {
+          "name": "12. Update Gift — Deactivate",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"active\": false\n}" },
+            "url": { "raw": "{{baseUrl}}/admin/gifts/{{adminGiftId}}", "host": ["{{baseUrl}}"], "path": ["admin", "gifts", "{{adminGiftId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users & Hosts",
+      "item": [
+        {
+          "name": "1. List Users",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/users", "host": ["{{baseUrl}}"], "path": ["admin", "users"] },
+            "description": "Users roster screen — includes last-active derived from login history."
+          }
+        },
+        {
+          "name": "2. Get User Detail",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/users/{{userId}}", "host": ["{{baseUrl}}"], "path": ["admin", "users", "{{userId}}"] },
+            "description": "Account detail screen — profile, last-20 calls/gifts/chats merged into one activity feed, moderation reports filed against them."
+          }
+        },
+        {
+          "name": "3. List Hosts",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/hosts", "host": ["{{baseUrl}}"], "path": ["admin", "hosts"] }
+          }
+        },
+        {
+          "name": "4. Get Host Detail",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/hosts/{{hostId}}", "host": ["{{baseUrl}}"], "path": ["admin", "hosts", "{{hostId}}"] }
+          }
+        },
+        {
+          "name": "5. List Host Gallery",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/hosts/{{hostId}}/gallery", "host": ["{{baseUrl}}"], "path": ["admin", "hosts", "{{hostId}}", "gallery"] }
+          }
+        },
+        {
+          "name": "6. Delete Host Gallery Item",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/hosts/{{hostId}}/gallery/{{galleryItemId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "hosts", "{{hostId}}", "gallery", "{{galleryItemId}}"]
+            },
+            "description": "Moderation-permission action, audit-logged."
+          }
+        },
+        {
+          "name": "7. Suspend User Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"suspended\",\n  \"reason\": \"Community guidelines violation\"\n}" },
+            "url": { "raw": "{{baseUrl}}/admin/users/{{userId}}/status", "host": ["{{baseUrl}}"], "path": ["admin", "users", "{{userId}}", "status"] },
+            "description": "Revokes every refresh token immediately and force-disconnects any live socket connection."
+          }
+        },
+        {
+          "name": "8. Reactivate User Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"active\"\n}" },
+            "url": { "raw": "{{baseUrl}}/admin/users/{{userId}}/status", "host": ["{{baseUrl}}"], "path": ["admin", "users", "{{userId}}", "status"] },
+            "description": "Undoes step 7 so this collection can be re-run without leaving the test user suspended."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Moderation",
+      "item": [
+        {
+          "name": "1. List Moderation Queue",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/moderation?status=pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "moderation"],
+              "query": [{ "key": "status", "value": "pending" }]
+            }
+          }
+        },
+        {
+          "name": "2. Resolve Report — Dismiss",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"action\": \"dismissed\",\n  \"resolutionNote\": \"No policy violation found\"\n}" },
+            "url": { "raw": "{{baseUrl}}/admin/moderation/{{reportId}}/resolve", "host": ["{{baseUrl}}"], "path": ["admin", "moderation", "{{reportId}}", "resolve"] },
+            "description": "action can be \"resolved\"/\"dismissed\", with an optional accountAction (\"warn\"/\"suspend\"/\"ban\") when the report targets an account — matches the design's single combined Dismiss/Warn/Suspend/Ban choice."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Live & Broadcast Messages",
+      "item": [
+        {
+          "name": "1. List Live Broadcasts",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/live-broadcasts", "host": ["{{baseUrl}}"], "path": ["admin", "live-broadcasts"] },
+            "description": "Every currently-live broadcast, not age-gated, with host identity + live viewer count."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["var jsonData = pm.response.json();", "if (jsonData.broadcasts && jsonData.broadcasts.length > 0) { pm.collectionVariables.set(\"liveBroadcastId\", jsonData.broadcasts[0].id); }"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Force End Live Broadcast",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/live-broadcasts/{{liveBroadcastId}}/end",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "live-broadcasts", "{{liveBroadcastId}}", "end"]
+            },
+            "description": "Only meaningful if liveBroadcastId was actually set above (a live broadcast has to exist) — notifies the room over the socket, audit-logged."
+          }
+        },
+        {
+          "name": "3. List Broadcast Messages",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/broadcast-messages", "host": ["{{baseUrl}}"], "path": ["admin", "broadcast-messages"] }
+          }
+        },
+        {
+          "name": "4. Send Broadcast Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"title\": \"Scheduled maintenance\",\n  \"message\": \"The platform will be briefly unavailable tonight at 2 AM.\",\n  \"recipients\": \"all\"\n}" },
+            "url": { "raw": "{{baseUrl}}/admin/broadcast-messages", "host": ["{{baseUrl}}"], "path": ["admin", "broadcast-messages"] },
+            "description": "recipients: all_users | all_hosts | all."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": ["var jsonData = pm.response.json();", "if (jsonData.id) { pm.collectionVariables.set(\"broadcastMessageId\", jsonData.id); }"] }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Adult Mode",
+      "item": [
+        {
+          "name": "1. List Adult Mode Config",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/config/adult-mode", "host": ["{{baseUrl}}"], "path": ["admin", "config", "adult-mode"] },
+            "description": "Restricted to full ADMIN only, not delegable to a sub-admin — the design labels this screen \"Accessible to Super Admin Only\"."
+          }
+        },
+        {
+          "name": "2. Toggle Adult Mode Config",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"enabled\": false\n}" },
+            "url": { "raw": "{{baseUrl}}/admin/config/adult-mode", "host": ["{{baseUrl}}"], "path": ["admin", "config", "adult-mode"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Audit, Dashboard & Reconciliation",
+      "item": [
+        {
+          "name": "1. Get Audit Log",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/audit-log?limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "audit-log"],
+              "query": [{ "key": "limit", "value": "20" }]
+            },
+            "description": "Every config-change entry records {previous, new} — also accepts adminId/from/to filters."
+          }
+        },
+        {
+          "name": "2. Get Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/dashboard", "host": ["{{baseUrl}}"], "path": ["admin", "dashboard"] },
+            "description": "Defaults to the last 30 days — pass ?from=&to= for a custom period. Includes activeUsers/activeHosts, a daily series, and period-scoped topEarningHosts."
+          }
+        },
+        {
+          "name": "3. Get Capture Events",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/capture-events?limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "capture-events"],
+              "query": [{ "key": "limit", "value": "20" }]
+            }
+          }
+        },
+        {
+          "name": "4. Get Wallet Reconciliation",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/admin/reconciliation", "host": ["{{baseUrl}}"], "path": ["admin", "reconciliation"] },
+            "description": "On-demand check that every wallet's cached balance agrees with its own ledger history (finance permission)."
+          }
+        }
+      ]
+    }
+  ]
+}

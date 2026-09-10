@@ -45,10 +45,10 @@ async function approveHostKyc(
 
 async function setPayoutDetails(app: ReturnType<typeof createApp>, hostAccessToken: string): Promise<void> {
   const res = await request(app)
-    .patch("/me/payout-details")
+    .post("/me/payout-methods")
     .set("Authorization", `Bearer ${hostAccessToken}`)
     .send({ type: "upi", vpa: "host@upi" });
-  expect(res.status).toBe(200);
+  expect(res.status).toBe(201);
 }
 
 // Beans only enter a host wallet through a real money-moving flow — reuses
@@ -138,6 +138,10 @@ describe("Withdrawals", () => {
     expect(res.status).toBe(201);
     expect(res.body.status).toBe("processing");
     expect(res.body.convertedAmountPaise).toBe(6000); // 1 paise/bean tier
+    // Seeded policy: 0 processing fee, 1% TDS -> 60 paise, net 5940.
+    expect(res.body.processingFeePaise).toBe(0);
+    expect(res.body.tdsPaise).toBe(60);
+    expect(res.body.netPayoutPaise).toBe(5940);
     expect(res.body.payoutTxnId).toMatch(/^dev-payout-/);
 
     const walletRes = await request(app).get("/wallet").set("Authorization", `Bearer ${host.accessToken}`);
@@ -275,33 +279,60 @@ describe("Withdrawals", () => {
   });
 });
 
-describe("Payout details", () => {
-  it("accepts a UPI payout detail and rejects an invalid IFSC for bank details", async () => {
+describe("Payout methods", () => {
+  it("accepts a UPI payout method and rejects an invalid IFSC for a bank method", async () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
 
     const upi = await request(app)
-      .patch("/me/payout-details")
+      .post("/me/payout-methods")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ type: "upi", vpa: "host@okhdfcbank" });
-    expect(upi.status).toBe(200);
-    expect(upi.body.payoutDetails).toEqual({ type: "upi", vpa: "host@okhdfcbank" });
+    expect(upi.status).toBe(201);
+    expect(upi.body.isPrimary).toBe(true);
+    expect(upi.body.details).toEqual({ type: "upi", vpa: "host@okhdfcbank" });
 
     const badIfsc = await request(app)
-      .patch("/me/payout-details")
+      .post("/me/payout-methods")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ type: "bank", accountHolderName: "Test Host", accountNumber: "1234567890", ifsc: "not-an-ifsc" });
     expect(badIfsc.status).toBe(400);
   });
 
-  it("rejects a non-host setting payout details", async () => {
+  it("rejects a non-host adding a payout method", async () => {
     const app = createApp();
     const user = await registerAndLogin(app, "user");
     const res = await request(app)
-      .patch("/me/payout-details")
+      .post("/me/payout-methods")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ type: "upi", vpa: "user@upi" });
     expect(res.status).toBe(403);
+  });
+
+  it("keeps exactly one primary method — the second added stays a backup until explicitly promoted", async () => {
+    const app = createApp();
+    const host = await registerAndLogin(app, "host");
+
+    const first = await request(app)
+      .post("/me/payout-methods")
+      .set("Authorization", `Bearer ${host.accessToken}`)
+      .send({ type: "upi", vpa: "primary@upi" });
+    const second = await request(app)
+      .post("/me/payout-methods")
+      .set("Authorization", `Bearer ${host.accessToken}`)
+      .send({ type: "upi", vpa: "backup@upi" });
+    expect(first.body.isPrimary).toBe(true);
+    expect(second.body.isPrimary).toBe(false);
+
+    const promoted = await request(app)
+      .patch(`/me/payout-methods/${second.body.id}/primary`)
+      .set("Authorization", `Bearer ${host.accessToken}`);
+    expect(promoted.status).toBe(200);
+    expect(promoted.body.isPrimary).toBe(true);
+
+    const list = await request(app).get("/me/payout-methods").set("Authorization", `Bearer ${host.accessToken}`);
+    const primaryCount = list.body.methods.filter((m: { isPrimary: boolean }) => m.isPrimary).length;
+    expect(primaryCount).toBe(1);
   });
 });
 

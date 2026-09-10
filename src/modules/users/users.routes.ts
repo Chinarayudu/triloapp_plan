@@ -3,13 +3,21 @@ import { eq } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "../../db/client";
-import { hostProfiles, users } from "../../db/schema";
+import { hostProfiles, payoutMethods, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { generateUploadUrl } from "../../lib/s3";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
+import { getHostRatingSummary } from "../calls/ratings.service";
 import { addGalleryItem, deleteOwnGalleryItem, listGalleryItems } from "../hosts/gallery.service";
+import {
+  addPayoutMethod,
+  deletePayoutMethod,
+  listPayoutMethods,
+  setPrimaryPayoutMethod,
+} from "../hosts/payoutMethods.service";
 import { createSubmission, getLatestSubmission, getSubmissionDocuments } from "./kyc.service";
+import { getPreferences, updatePreferences } from "./notificationPreferences.service";
 import { getHostProfile, getUserById } from "./users.service";
 
 export const usersRouter = Router();
@@ -19,7 +27,10 @@ usersRouter.get("/me", requireAuth, async (req, res, next) => {
     const user = await getUserById(req.user!.sub);
     if (!user) throw new AppError(404, "User not found");
 
-    const hostProfile = user.role === "host" ? await getHostProfile(user.id) : undefined;
+    const hostProfile =
+      user.role === "host"
+        ? { ...(await getHostProfile(user.id)), rating: await getHostRatingSummary(user.id) }
+        : undefined;
 
     res.json({
       id: user.id,
@@ -62,6 +73,10 @@ const updateHostProfileSchema = z.object({
   bio: z.string().max(500).optional(),
   gallery: z.array(z.string().url()).max(20).optional(),
   ratePerMinutePaise: z.number().int().positive().optional(),
+  voiceRatePerMinutePaise: z.number().int().positive().optional(),
+  privateLiveRatePerMinutePaise: z.number().int().positive().optional(),
+  autoAcceptCalls: z.boolean().optional(),
+  voiceCallsOnlyAfterMidnight: z.boolean().optional(),
 });
 
 usersRouter.patch(
@@ -211,13 +226,13 @@ usersRouter.get("/me/kyc", requireAuth, async (req, res, next) => {
   }
 });
 
-// UPI or bank payout details (BR-ACC-03, BACKEND_PLAN.md §1 withdrawals) —
-// stored as a JSON string in hostProfiles.payoutDetails, same "structure
-// finalized when withdrawals land" placeholder column added back in
-// Phase 1. Snapshotted onto each withdrawal request at creation time
-// (withdrawal.service.ts) so a host changing their bank details later
-// doesn't retroactively alter a request already in flight.
-const payoutDetailsSchema = z.discriminatedUnion("type", [
+// UPI or bank payout methods (BR-ACC-03, BACKEND_PLAN.md §1 withdrawals) —
+// a host can hold several (payout_methods table, Host app design
+// follow-up: "Add New Payout Account" screen shows a primary bank account
+// plus a backup UPI id). Snapshotted onto each withdrawal request at
+// creation time (withdrawal.service.ts) so a host changing their details
+// later doesn't retroactively alter a request already in flight.
+const payoutMethodBodySchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("upi"), vpa: z.string().min(3).max(100) }),
   z.object({
     type: z.literal("bank"),
@@ -227,20 +242,90 @@ const payoutDetailsSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
-usersRouter.patch(
-  "/me/payout-details",
+function serializePayoutMethod(method: typeof payoutMethods.$inferSelect) {
+  return { id: method.id, type: method.type, isPrimary: method.isPrimary, details: JSON.parse(method.detailsJson) };
+}
+
+usersRouter.post(
+  "/me/payout-methods",
   requireAuth,
   requireRole("host"),
-  validateBody(payoutDetailsSchema),
+  validateBody(payoutMethodBodySchema),
   async (req, res, next) => {
     try {
-      const payoutDetails = req.body as z.infer<typeof payoutDetailsSchema>;
-      const [updated] = await db
-        .update(hostProfiles)
-        .set({ payoutDetails: JSON.stringify(payoutDetails), updatedAt: new Date() })
-        .where(eq(hostProfiles.userId, req.user!.sub))
-        .returning();
-      res.json({ payoutDetails: JSON.parse(updated.payoutDetails as string) });
+      const body = req.body as z.infer<typeof payoutMethodBodySchema>;
+      const method = await addPayoutMethod(req.user!.sub, body.type, JSON.stringify(body));
+      res.status(201).json(serializePayoutMethod(method));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+usersRouter.get("/me/payout-methods", requireAuth, requireRole("host"), async (req, res, next) => {
+  try {
+    const methods = await listPayoutMethods(req.user!.sub);
+    res.json({ methods: methods.map(serializePayoutMethod) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+usersRouter.delete("/me/payout-methods/:id", requireAuth, requireRole("host"), async (req, res, next) => {
+  try {
+    const id = z.string().uuid().safeParse(req.params.id);
+    if (!id.success) throw new AppError(400, "Invalid payout method id");
+    await deletePayoutMethod(req.user!.sub, id.data);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+usersRouter.patch("/me/payout-methods/:id/primary", requireAuth, requireRole("host"), async (req, res, next) => {
+  try {
+    const id = z.string().uuid().safeParse(req.params.id);
+    if (!id.success) throw new AppError(400, "Invalid payout method id");
+    const method = await setPrimaryPayoutMethod(req.user!.sub, id.data);
+    res.json(serializePayoutMethod(method));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Notification Settings screen (Host app design follow-up) — real,
+// persisted CRUD only. Gating actual push sends on these is a follow-up,
+// not built here (push.ts is still a dev-log stub with no real provider).
+const notificationPreferencesSchema = z.object({
+  incomingCalls: z.boolean().optional(),
+  missedCalls: z.boolean().optional(),
+  newMessages: z.boolean().optional(),
+  callReminders: z.boolean().optional(),
+  giftsReceived: z.boolean().optional(),
+  withdrawalUpdates: z.boolean().optional(),
+  weeklyEarningsSummary: z.boolean().optional(),
+  promotionsAndTips: z.boolean().optional(),
+  dndEnabled: z.boolean().optional(),
+  dndStartHour: z.number().int().min(0).max(23).optional(),
+  dndEndHour: z.number().int().min(0).max(23).optional(),
+});
+
+usersRouter.get("/me/notification-preferences", requireAuth, async (req, res, next) => {
+  try {
+    res.json(await getPreferences(req.user!.sub));
+  } catch (err) {
+    next(err);
+  }
+});
+
+usersRouter.patch(
+  "/me/notification-preferences",
+  requireAuth,
+  validateBody(notificationPreferencesSchema),
+  async (req, res, next) => {
+    try {
+      const updates = req.body as z.infer<typeof notificationPreferencesSchema>;
+      res.json(await updatePreferences(req.user!.sub, updates));
     } catch (err) {
       next(err);
     }
