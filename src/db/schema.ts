@@ -20,7 +20,10 @@ export const kycStatusEnum = pgEnum("kyc_status", [
   "approved",
   "rejected",
 ]);
-export const accountStatusEnum = pgEnum("account_status", ["active", "suspended", "banned"]);
+// "deleted" (User app design follow-up) reuses the same login-blocking check
+// every non-"active" status already gets (auth.routes.ts's verifyOtp) — no
+// new gating logic needed. See users.service.ts's deleteOwnAccount.
+export const accountStatusEnum = pgEnum("account_status", ["active", "suspended", "banned", "deleted"]);
 // Restricted permission sets for SUB_ADMIN accounts (BR-ADM-03) — a full
 // ADMIN implicitly has all of these (checked in admin/permissions.ts) and
 // never needs this column populated. "finance" covers withdrawal approval
@@ -33,9 +36,24 @@ export const users = pgTable("users", {
   role: roleEnum("role").notNull(),
   phone: text("phone").notNull().unique(),
   name: text("name"),
+  // Public @handle (User/Host Edit Profile screens) — distinct from name.
+  // Nullable: existing accounts predate this field, and picking one isn't
+  // forced at signup.
+  username: text("username").unique(),
   email: text("email"),
   dob: text("dob"), // ISO date string; verified DOB comes from KYC review (Phase 9), not this field alone
+  // Verified two ways depending on role (User app design follow-up):
+  // Hosts go through admin-reviewed KYC (decideKyc, admin.service.ts) —
+  // BR-ACC-04's "distinct from a self-declared checkbox" bar. Users
+  // self-declare via POST /me/verify-age (users.routes.ts) instead — a
+  // deliberate deviation from BR-ACC-04 as written, see BRD.md's amendment
+  // note on that requirement.
   ageVerified: boolean("age_verified").notNull().default(false),
+  // User's own spoken languages (User Profile → Languages screen) — "used
+  // for creator recommendations" per the design; no recommendation engine
+  // consumes it yet, same "field before the feature" precedent as
+  // hostProfiles.privateLiveRatePerMinutePaise.
+  languages: text("languages").array().notNull().default([]),
   // Denormalized mirror of the latest row in kycSubmissions (below) — kept
   // on the user row because almost every KYC-gate check in the codebase
   // (withdrawals, live 18+ gating, admin decisions) only cares about "what
@@ -74,6 +92,13 @@ export const hostProfiles = pgTable("host_profiles", {
   privateLiveRatePerMinutePaise: integer("private_live_rate_per_minute_paise"),
   autoAcceptCalls: boolean("auto_accept_calls").notNull().default(true),
   voiceCallsOnlyAfterMidnight: boolean("voice_calls_only_after_midnight").notNull().default(false),
+  // Creator Profile screen's structured sections (User app design
+  // follow-up) — separate from the free-text bio above. languages also
+  // drives the User app's search/filter by language.
+  languages: text("languages").array().notNull().default([]),
+  talksAboutTags: text("talks_about_tags").array().notNull().default([]),
+  hobbies: text("hobbies").array().notNull().default([]),
+  sports: text("sports").array().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -257,6 +282,11 @@ export const notificationPreferences = pgTable("notification_preferences", {
   withdrawalUpdates: boolean("withdrawal_updates").notNull().default(true),
   weeklyEarningsSummary: boolean("weekly_earnings_summary").notNull().default(false),
   promotionsAndTips: boolean("promotions_and_tips").notNull().default(false),
+  // User app Notification Settings screen's remaining toggles — "Messages"/
+  // "Offers" there already map to newMessages/promotionsAndTips above.
+  liveAlerts: boolean("live_alerts").notNull().default(true), // a followed host going live (BR-NOTIF-01)
+  callSummaries: boolean("call_summaries").notNull().default(false),
+  walletActivityAlerts: boolean("wallet_activity_alerts").notNull().default(true), // recharge/balance updates
   dndEnabled: boolean("dnd_enabled").notNull().default(true),
   dndStartHour: integer("dnd_start_hour").notNull().default(1), // 0-23, local-time-naive (BACKEND_PLAN.md has no per-user timezone concept yet)
   dndEndHour: integer("dnd_end_hour").notNull().default(7),
@@ -320,6 +350,101 @@ export const ledgerEntries = pgTable("ledger_entries", {
   referenceId: uuid("reference_id"),
   balanceAfter: integer("balance_after").notNull(),
   idempotencyKey: text("idempotency_key").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// Wallet recharge (BACKEND_PLAN.md §2, User app design follow-up) — the
+// RechargeTxn table §2 already envisioned but never built. Real
+// order-creation lifecycle; the actual gateway call is dev-stubbed
+// (wallet.routes.ts's dev-resolve), same pattern as withdrawal.service.ts's
+// dev-resolve-payout, since no real gateway is wired up yet (§3).
+// ---------------------------------------------------------------------------
+
+// Admin-configurable catalog (same CRUD spirit as gifts) — the Talktime
+// screen's preset recharge tiles. displayBeans is a marketing number shown
+// alongside the real price, not a real currency (BRD.md: beans are the
+// host's internal earnings unit only) — see wallet.service.ts's
+// paiseToDisplayBeans for the separate flat constant used to render an
+// arbitrary balance in "beans," which these package numbers intentionally
+// don't have to reconcile with (a volume bonus, same idea as withdrawal
+// slabs on the host side).
+export const rechargePackages = pgTable("recharge_packages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  pricePaise: integer("price_paise").notNull(),
+  mrpPaise: integer("mrp_paise"), // optional strikethrough "was" price for display
+  displayBeans: integer("display_beans").notNull(),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const rechargeTxnStatusEnum = pgEnum("recharge_txn_status", ["created", "success", "failed"]);
+
+export const rechargeTxns = pgTable("recharge_txns", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  packageId: uuid("package_id")
+    .notNull()
+    .references(() => rechargePackages.id),
+  amountPaise: integer("amount_paise").notNull(), // snapshot — a later package price change can't alter an in-flight order
+  displayBeans: integer("display_beans").notNull(), // snapshot
+  gateway: text("gateway").notNull().default("dev-stub"),
+  gatewayTxnId: text("gateway_txn_id"),
+  status: rechargeTxnStatusEnum("status").notNull().default("created"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// VIP subscriptions (User app design follow-up) — BRD.md's "Out of scope
+// (this phase): Subscription/membership pricing tiers" explicitly excluded
+// this; built anyway per an explicit decision overriding that scope call.
+// Real money-path piece is the call-rate discount (calls.service.ts's
+// initiateCall); "VIP Access/Chats/Care" (unlimited live+chat, priority
+// messages, priority support) aren't wired to anything — chat/live-viewing
+// aren't paywalled today and there's no support-ticket or chat-priority
+// system to hook a "priority" flag into.
+// ---------------------------------------------------------------------------
+
+export const vipPlans = pgTable("vip_plans", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  durationDays: integer("duration_days").notNull(),
+  pricePaise: integer("price_paise").notNull(),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const vipSubscriptionStatusEnum = pgEnum("vip_subscription_status", ["active", "cancelled", "expired"]);
+
+export const vipSubscriptions = pgTable("vip_subscriptions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  planId: uuid("plan_id")
+    .notNull()
+    .references(() => vipPlans.id),
+  status: vipSubscriptionStatusEnum("status").notNull().default("active"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  // Cancelling keeps benefits until expiresAt (matches the Active
+  // Subscriptions screen's copy) — status only flips to "cancelled" once
+  // expiresAt actually passes, same "computed on read" reasoning as call
+  // ratings' aggregate.
+  cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Versioned like commissionConfigs — the call-discount rate is a guess (no
+// % is specified anywhere in the Figma), admin-tunable later without a
+// deployment, same BR-ADM-02 reasoning as every other pricing lever here.
+export const vipConfigs = pgTable("vip_configs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  callDiscountBasisPoints: integer("call_discount_basis_points").notNull(),
+  effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -679,6 +804,45 @@ export const moderationReports = pgTable("moderation_reports", {
   status: moderationStatusEnum("status").notNull().default("pending"),
   resolvedByAdminId: uuid("resolved_by_admin_id").references(() => users.id),
   resolutionNote: text("resolution_note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+});
+
+// The India IT-Rules-style formal grievance form (User app design
+// follow-up, Terms & Policies screen's "Grievance Officer... response within
+// 15 days") — distinct from moderationReports above: a slower SLA,
+// structured contact fields (resubmitted explicitly rather than trusted
+// from the account, so the record stands on its own if the account later
+// changes), a fixed complaint-nature taxonomy, and file evidence. No admin
+// review screen for this exists yet (not in the admin app's design) —
+// submission + storage only for now.
+export const grievanceNatureEnum = pgEnum("grievance_nature", [
+  "content_objection",
+  "nudity_pornography",
+  "reinstatement",
+  "copyright_violation",
+  "judicial_order",
+  "government_request",
+  "privacy",
+  "impersonation",
+  "child_safety",
+  "other",
+]);
+export const grievanceStatusEnum = pgEnum("grievance_status", ["pending", "resolved"]);
+
+export const grievances = pgTable("grievances", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  firstName: text("first_name").notNull(),
+  lastName: text("last_name").notNull(),
+  contactNumber: text("contact_number").notNull(),
+  email: text("email").notNull(),
+  natureOfComplaint: grievanceNatureEnum("nature_of_complaint").notNull(),
+  description: text("description").notNull(),
+  evidenceKeys: text("evidence_keys").array().notNull().default([]), // private S3 object keys, same presign-on-demand convention as KYC documents
+  status: grievanceStatusEnum("status").notNull().default("pending"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
 });

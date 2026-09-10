@@ -106,6 +106,13 @@
       "when": 1789027779438,
       "tag": "0014_drop_host_payout_details",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789041709278,
+      "tag": "0015_user_gap_closure",
+      "breakpoints": true
     }
   ]
 }

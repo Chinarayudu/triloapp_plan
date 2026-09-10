@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "c2a3b4d5-2345-4b6c-9d7e-user000000002",
     "name": "TriloPlan User API",
-    "description": "Backend API surface for the User app — seeded with everything already built for the USER role (auth, discovery, wallet, calls, chat, gifts, live viewing, moderation). No User-app Figma screens have been reviewed yet (only the Host app has been so far), so this collection is not screen-verified the way TriloPlan-Host is — it covers what the backend already exposes for USER, and should be revisited once the User app's screens are shared. See CLAUDE.md, BACKEND_PLAN.md and BRD.md in the repo for full backend context.\n\nCompanion collections: `TriloPlan-Host.postman_collection.json` (screen-verified against the Host app's Figma) and `TriloPlan-Admin.postman_collection.json`.\n\n## OTP login while there's no real SMS yet\nThe backend has a dev-only bypass (`OTP_BYPASS_VERIFICATION=true` in the server's `.env`, off in production): `POST /auth/otp/verify` accepts ANY phone + ANY 6-digit code, no prior `/otp/request` call required. This collection still calls `/otp/request` first and saves `devCode` (harmless either way).\n\n## Recommended run order (Collection Runner-safe, top to bottom)\nAuth — User Login → Profile (Me) → Setup — Counterpart Host → Hosts — Discovery & Follow → Wallet → Calls → Chat → Gifts → Live Broadcasting → Moderation → Auth — Session.",
+    "description": "Backend API surface for the User app — screen-verified against the User app's Figma (~90 screens, User app design follow-up). See CLAUDE.md, BACKEND_PLAN.md and BRD.md in the repo for full backend context.\n\nCompanion collections: `TriloPlan-Host.postman_collection.json` and `TriloPlan-Admin.postman_collection.json`.\n\n## Four Figma/BRD conflicts resolved before building this pass\nSee `BACKEND_PLAN.md`'s \"User app design follow-up\" section for full detail. In short: the wallet/recharge/call-spend \"beans\" you'll see in responses (`displayBeans`) are a **display-only label** — paise is still the real internal currency; VIP Subscriptions were built despite BRD's prior \"out of scope\" call; \"Level Up\" loyalty tiers were **not** built (not in the BRD, no economics specified); Users verify age via self-declared DOB (`POST /me/verify-age`), Hosts still go through KYC review.\n\n## OTP login while there's no real SMS yet\nThe backend has a dev-only bypass (`OTP_BYPASS_VERIFICATION=true` in the server's `.env`, off in production): `POST /auth/otp/verify` accepts ANY phone + ANY 6-digit code, no prior `/otp/request` call required. This collection still calls `/otp/request` first and saves `devCode` (harmless either way).\n\n## Recommended run order (Collection Runner-safe, top to bottom)\nAuth — User Login → Profile (Me) → Setup — Counterpart Host → Hosts — Discovery & Follow → Wallet → Wallet Recharge → VIP Subscription → Calls → Chat → Gifts → Live Broadcasting → Moderation → Grievance → Auth — Session → Delete Account (last — scrubs the account, so re-running the collection from the top afterward just creates a fresh one on the same `userPhone`).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": { "type": "noauth" },
@@ -24,7 +24,13 @@
     { "key": "chatConversationId", "value": "", "type": "string" },
     { "key": "giftId", "value": "", "type": "string" },
     { "key": "liveBroadcastId", "value": "", "type": "string" },
-    { "key": "reportId", "value": "", "type": "string" }
+    { "key": "reportId", "value": "", "type": "string" },
+    { "key": "rechargePackageId", "value": "", "type": "string" },
+    { "key": "rechargeTxnId", "value": "", "type": "string" },
+    { "key": "vipPlanId", "value": "", "type": "string" },
+    { "key": "vipSubscriptionId", "value": "", "type": "string" },
+    { "key": "grievanceUploadUrl", "value": "", "type": "string" },
+    { "key": "grievanceEvidenceKey", "value": "", "type": "string" }
   ],
   "item": [
     {
@@ -36,7 +42,8 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
             "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{userPhone}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] }
+            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] },
+            "description": "Matches the app's \"Your number / Send code\" screen (step 1 of 4)."
           },
           "event": [
             {
@@ -59,7 +66,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
             "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{userPhone}}\",\n  \"code\": \"{{userDevCode}}\",\n  \"role\": \"user\"\n}" },
             "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] },
-            "description": "Any 6-digit code works while OTP_BYPASS_VERIFICATION is on."
+            "description": "Matches \"Verify / Step 2 of 4\". Any 6-digit code works while OTP_BYPASS_VERIFICATION is on."
           },
           "event": [
             {
@@ -89,19 +96,30 @@
           "request": {
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] }
+            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] },
+            "description": "Profile screen — now includes username, languages, and isVipActive alongside the existing fields."
           }
         },
         {
-          "name": "Update My Profile",
+          "name": "Update My Profile — Set Profile Photo/Name/DOB (Step 3 of 4)",
           "request": {
             "method": "PATCH",
             "header": [
               { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
               { "key": "Content-Type", "value": "application/json", "type": "text" }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Rahul\",\n  \"email\": \"rahul@mail.com\"\n}" },
-            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] }
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Arjun Sharma\",\n  \"username\": \"arjun\",\n  \"email\": \"arjun.m@email.com\",\n  \"dob\": \"1996-03-12\",\n  \"languages\": [\"Hindi\", \"English\"]\n}" },
+            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] },
+            "description": "Edit Profile screen's fields. DOB is required before Verify Age below can succeed."
+          }
+        },
+        {
+          "name": "Verify Age (Step 4 of 4 — \"Access confirmed\")",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me/verify-age", "host": ["{{baseUrl}}"], "path": ["me", "verify-age"] },
+            "description": "Self-declared DOB verification (User app design follow-up — a deliberate deviation from BR-ACC-04's KYC-reviewed bar, see BRD.md's amendment note). Instant: 200 { ageVerified: true } if 18+ from the DOB set above, { ageVerified: false } otherwise (never suspends the account)."
           }
         },
         {
@@ -114,7 +132,7 @@
             ],
             "body": { "mode": "raw", "raw": "{\n  \"contentType\": \"application/pdf\"\n}" },
             "url": { "raw": "{{baseUrl}}/me/kyc/upload-url", "host": ["{{baseUrl}}"], "path": ["me", "kyc", "upload-url"] },
-            "description": "18+ age verification (BR-MOD-02) reuses the same KYC flow as hosts."
+            "description": "KYC (identity documents, distinct from the age self-declaration above) — not shown as a User-app screen but the endpoint still exists for any future use."
           },
           "event": [
             {
@@ -158,6 +176,27 @@
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
             "url": { "raw": "{{baseUrl}}/me/kyc", "host": ["{{baseUrl}}"], "path": ["me", "kyc"] }
+          }
+        },
+        {
+          "name": "Get Notification Preferences",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me/notification-preferences", "host": ["{{baseUrl}}"], "path": ["me", "notification-preferences"] },
+            "description": "Notifications settings screen — Live alerts / Messages / Call summaries / Wallet activity / Offers."
+          }
+        },
+        {
+          "name": "Update Notification Preferences",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"callSummaries\": true,\n  \"promotionsAndTips\": false\n}" },
+            "url": { "raw": "{{baseUrl}}/me/notification-preferences", "host": ["{{baseUrl}}"], "path": ["me", "notification-preferences"] }
           }
         }
       ]
@@ -209,15 +248,19 @@
           ]
         },
         {
-          "name": "3. Set Host Rate",
+          "name": "3. Set Host Rate + Profile Details",
           "request": {
             "method": "PATCH",
             "header": [
               { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
               { "key": "Content-Type", "value": "application/json", "type": "text" }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"ratePerMinutePaise\": 2400\n}" },
-            "url": { "raw": "{{baseUrl}}/me/host-profile", "host": ["{{baseUrl}}"], "path": ["me", "host-profile"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ratePerMinutePaise\": 2400,\n  \"bio\": \"Classical-meets-contemporary dancer.\",\n  \"languages\": [\"Hindi\", \"English\"],\n  \"talksAboutTags\": [\"Dance\", \"Bollywood music\", \"Mumbai food\"],\n  \"hobbies\": [\"Classical dance practice\", \"Cooking on weekends\"],\n  \"sports\": [\"Badminton\", \"Cycling\"]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/me/host-profile", "host": ["{{baseUrl}}"], "path": ["me", "host-profile"] },
+            "description": "Fills in the Creator Profile screen's structured sections (Talks About / Hobbies / Sports) so Get Host Detail below has something to show."
           }
         },
         {
@@ -253,7 +296,30 @@
                 { "key": "pageSize", "value": "20" }
               ]
             },
-            "description": "sort also accepts rate_asc|rate_desc|online_first. Each host now includes rating: {average, count}."
+            "description": "Home screen's All/New/Popular/Nearby/Following tabs all resolve to this with different sort/filter — sort also accepts rate_asc|rate_desc|online_first. Each host now includes rating, galleryCount (the photo-count badge on the card)."
+          }
+        },
+        {
+          "name": "Search Hosts",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/hosts?q=Hindi",
+              "host": ["{{baseUrl}}"],
+              "path": ["hosts"],
+              "query": [{ "key": "q", "value": "Hindi" }]
+            },
+            "description": "Search screen — q matches creator name or any spoken language (partial, case-insensitive)."
+          }
+        },
+        {
+          "name": "Get Host Detail",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/hosts/{{hostId}}", "host": ["{{baseUrl}}"], "path": ["hosts", "{{hostId}}"] },
+            "description": "Creator Profile screen (previously had no backing endpoint — only the list view existed) — bio, talksAboutTags/hobbies/sports/languages, gallery, rating, followerCount, isFollowing, online status, derived age."
           }
         },
         {
@@ -290,7 +356,8 @@
           "request": {
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/wallet", "host": ["{{baseUrl}}"], "path": ["wallet"] }
+            "url": { "raw": "{{baseUrl}}/wallet", "host": ["{{baseUrl}}"], "path": ["wallet"] },
+            "description": "Now includes displayBeans alongside balancePaise — a fixed, cosmetic-only conversion (see the collection description's \"beans\" note)."
           }
         },
         {
@@ -303,7 +370,158 @@
             ],
             "body": { "mode": "raw", "raw": "{\n  \"amountPaise\": 500000\n}" },
             "url": { "raw": "{{baseUrl}}/wallet/dev-credit", "host": ["{{baseUrl}}"], "path": ["wallet", "dev-credit"] },
-            "description": "No real payment gateway wired up yet — this is the \"Add money\" recharge stand-in."
+            "description": "A quick arbitrary-amount top-up for exercising other features (calls, gifts) — kept alongside the more realistic Wallet Recharge flow below, which matches the actual Talktime/Add-balance screens."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wallet Recharge",
+      "description": "The Talktime/Add-balance screens' real flow — order creation against a preset package, then a dev-stubbed gateway confirmation (no real payment gateway wired up yet, BACKEND_PLAN.md §3).",
+      "item": [
+        {
+          "name": "1. List Recharge Packages",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/wallet/recharge-packages", "host": ["{{baseUrl}}"], "path": ["wallet", "recharge-packages"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.packages && jsonData.packages.length > 0) { pm.collectionVariables.set(\"rechargePackageId\", jsonData.packages[0].id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Initiate Recharge (\"Processing payment\")",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"packageId\": \"{{rechargePackageId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/wallet/recharge/initiate", "host": ["{{baseUrl}}"], "path": ["wallet", "recharge", "initiate"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"rechargeTxnId\", jsonData.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Get Recharge Status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/wallet/recharge/{{rechargeTxnId}}", "host": ["{{baseUrl}}"], "path": ["wallet", "recharge", "{{rechargeTxnId}}"] }
+          }
+        },
+        {
+          "name": "4. Dev-Resolve Recharge — Success (\"Balance added\")",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"success\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/wallet/recharge/{{rechargeTxnId}}/dev-resolve",
+              "host": ["{{baseUrl}}"],
+              "path": ["wallet", "recharge", "{{rechargeTxnId}}", "dev-resolve"]
+            },
+            "description": "Stands in for the payment gateway's webhook — non-prod only. outcome can also be \"failed\" (\"Payment failed\" screen)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "VIP Subscription",
+      "description": "BRD.md's \"Out of scope (this phase)\" scope call on subscriptions was reversed by explicit decision (User app design follow-up) — see BACKEND_PLAN.md. Real benefit: a discount on call rates, applied automatically in Calls → Initiate Call below once subscribed.",
+      "item": [
+        {
+          "name": "1. List VIP Plans",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/vip/plans", "host": ["{{baseUrl}}"], "path": ["vip", "plans"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "var threeMonth = jsonData.plans.find(function (p) { return p.name === \"3 Months\"; });",
+                  "if (threeMonth) { pm.collectionVariables.set(\"vipPlanId\", threeMonth.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Subscribe (\"Become VIP Now\")",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"planId\": \"{{vipPlanId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/vip/subscribe", "host": ["{{baseUrl}}"], "path": ["vip", "subscribe"] },
+            "description": "Dev-stubbed payment (no real gateway yet) — activates immediately. Resubscribing while already active extends from the current expiry rather than from now."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"vipSubscriptionId\", jsonData.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. List My Subscriptions",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/me/subscriptions", "host": ["{{baseUrl}}"], "path": ["me", "subscriptions"] }
+          }
+        },
+        {
+          "name": "4. Cancel Subscription",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/me/subscriptions/{{vipSubscriptionId}}/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["me", "subscriptions", "{{vipSubscriptionId}}", "cancel"]
+            },
+            "description": "Sets cancelAtPeriodEnd — benefits (incl. the call-rate discount) continue until expiresAt, matching the Active Subscriptions screen's copy. Run BEFORE Calls below if you want to see the un-discounted rate instead."
           }
         }
       ]
@@ -321,7 +539,7 @@
             ],
             "body": { "mode": "raw", "raw": "{\n  \"hostId\": \"{{hostId}}\",\n  \"type\": \"video\"\n}" },
             "url": { "raw": "{{baseUrl}}/calls", "host": ["{{baseUrl}}"], "path": ["calls"] },
-            "description": "type is \"video\" or \"voice\" — the host needs the matching per-type rate set (Setup folder only sets the video rate)."
+            "description": "type is \"video\" or \"voice\" — the host needs the matching per-type rate set (Setup folder only sets the video rate). If VIP Subscription → Subscribe ran above and wasn't cancelled, the snapshotted rate reflects the VIP discount."
           },
           "event": [
             {
@@ -365,6 +583,20 @@
             "body": { "mode": "raw", "raw": "{\n  \"stars\": 5\n}" },
             "url": { "raw": "{{baseUrl}}/calls/{{callId}}/rating", "host": ["{{baseUrl}}"], "path": ["calls", "{{callId}}", "rating"] },
             "description": "Only succeeds once the call has reached \"completed\" — will 409 if run right after End Call above left it \"missed\"."
+          }
+        },
+        {
+          "name": "5. List My Past Calls",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/me/calls?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["me", "calls"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "pageSize", "value": "20" }]
+            },
+            "description": "Past Calls screen (previously had no backing endpoint — only the host side had an equivalent)."
           }
         }
       ]
@@ -590,6 +822,63 @@
       ]
     },
     {
+      "name": "Grievance",
+      "description": "The India IT-Rules-style formal complaint form (Terms & Policies screen's \"Grievance Officer... response within 15 days\") — distinct from Moderation → File Report above (24h SLA, structured fields, file evidence, no admin review screen yet).",
+      "item": [
+        {
+          "name": "1. Get Evidence Upload URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"contentType\": \"image/png\"\n}" },
+            "url": { "raw": "{{baseUrl}}/grievances/upload-url", "host": ["{{baseUrl}}"], "path": ["grievances", "upload-url"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"grievanceUploadUrl\", jsonData.uploadUrl);",
+                  "pm.collectionVariables.set(\"grievanceEvidenceKey\", jsonData.key);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Upload Evidence to S3",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "image/png", "type": "text" }],
+            "body": { "mode": "raw", "raw": "This is placeholder file content for testing the upload flow." },
+            "url": { "raw": "{{grievanceUploadUrl}}", "host": ["{{grievanceUploadUrl}}"] }
+          }
+        },
+        {
+          "name": "3. Submit Grievance",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Arjun\",\n  \"lastName\": \"Mehra\",\n  \"contactNumber\": \"+919822041188\",\n  \"email\": \"arjun.m@email.com\",\n  \"natureOfComplaint\": \"nudity_pornography\",\n  \"description\": \"During a video call on 27 Aug, the host shared explicit content without consent.\",\n  \"evidenceKeys\": [\"{{grievanceEvidenceKey}}\"]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/grievances", "host": ["{{baseUrl}}"], "path": ["grievances"] },
+            "description": "natureOfComplaint also accepts content_objection|reinstatement|copyright_violation|judicial_order|government_request|privacy|impersonation|child_safety|other."
+          }
+        }
+      ]
+    },
+    {
       "name": "Auth — Session",
       "item": [
         {
@@ -627,6 +916,44 @@
             ],
             "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{userRefreshToken}}\"\n}" },
             "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth", "logout"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete Account",
+      "description": "Run LAST — revokes tokens and scrubs the account (name/email/dob/username -> null, phone -> a random placeholder), so nothing after this in a from-the-top re-run needs the old userAccessToken. Re-running the whole collection afterward creates a fresh account on the same userPhone, since delete freed it up.",
+      "item": [
+        {
+          "name": "1. Re-login (tokens from Auth — Session may be stale)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{userPhone}}\",\n  \"code\": \"000000\",\n  \"role\": \"user\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] },
+            "description": "Any 6-digit code works while OTP_BYPASS_VERIFICATION is on — re-establishes a fresh access token in case Auth — Session's Logout already revoked the old one."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["var jsonData = pm.response.json();", "if (jsonData.accessToken) { pm.collectionVariables.set(\"userAccessToken\", jsonData.accessToken); }"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Delete Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"confirm\": \"DELETE\"\n}" },
+            "url": { "raw": "{{baseUrl}}/me/delete-account", "host": ["{{baseUrl}}"], "path": ["me", "delete-account"] },
+            "description": "\"Type DELETE to confirm\" screen."
           }
         }
       ]

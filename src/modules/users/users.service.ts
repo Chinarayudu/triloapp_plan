@@ -1,6 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../../db/client";
 import { hostProfiles, hostWallets, notificationPreferences, users, wallets } from "../../db/schema";
+import { AppError } from "../../lib/errors";
+import { disconnectUser } from "../../realtime/socket";
+import { revokeAllRefreshTokensForUser } from "../auth/token.service";
 
 export type SignupRole = "user" | "host";
 
@@ -39,4 +43,57 @@ export async function createUser(phone: string, role: SignupRole) {
 export async function getHostProfile(userId: string) {
   const [profile] = await db.select().from(hostProfiles).where(eq(hostProfiles.userId, userId)).limit(1);
   return profile;
+}
+
+const MIN_AGE_YEARS = 18;
+
+function isAtLeastAge(dob: string, minAgeYears: number): boolean {
+  const birthDate = new Date(dob);
+  const cutoff = new Date();
+  cutoff.setFullYear(cutoff.getFullYear() - minAgeYears);
+  return birthDate <= cutoff;
+}
+
+// Self-declared age verification for Users (User app design follow-up) —
+// see users.routes.ts's POST /me/verify-age and BRD.md's amendment note on
+// BR-ACC-04. Never suspends the account on failure — just leaves
+// ageVerified false, nothing more destructive than that.
+export async function verifyOwnAge(userId: string): Promise<{ ageVerified: boolean }> {
+  const user = await getUserById(userId);
+  if (!user) throw new AppError(404, "User not found");
+  if (!user.dob) throw new AppError(400, "Set your date of birth before verifying age");
+
+  if (!isAtLeastAge(user.dob, MIN_AGE_YEARS)) {
+    return { ageVerified: false };
+  }
+
+  await db.update(users).set({ ageVerified: true, updatedAt: new Date() }).where(eq(users.id, userId));
+  return { ageVerified: true };
+}
+
+// Delete Account screen (User app design follow-up) — soft delete via
+// anonymization, never an actual row removal: past calls/gifts/ledger
+// entries need a valid owner to keep meaning. Reuses the same
+// token-revocation/socket-disconnect helpers admin.service.ts's
+// setAccountStatus already uses for suspension, since the effect (block
+// this account from doing anything else, right now) is identical.
+export async function deleteOwnAccount(userId: string): Promise<void> {
+  const user = await getUserById(userId);
+  if (!user) throw new AppError(404, "User not found");
+
+  await db
+    .update(users)
+    .set({
+      status: "deleted",
+      name: null,
+      email: null,
+      dob: null,
+      username: null,
+      phone: `deleted-${randomUUID()}`,
+      updatedAt: new Date(),
+    })
+    .where(eq(users.id, userId));
+
+  await revokeAllRefreshTokensForUser(userId);
+  await disconnectUser(userId);
 }

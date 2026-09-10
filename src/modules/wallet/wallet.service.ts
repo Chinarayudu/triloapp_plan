@@ -68,6 +68,22 @@ export async function getHostBeanBalance(hostId: string): Promise<number> {
   return row.beanBalance;
 }
 
+// User app design follow-up: the User app's wallet/call screens show
+// "beans" everywhere, but BRD.md is explicit that beans are the host's
+// internal earnings unit only — the user side stays paise-denominated
+// internally (BACKEND_PLAN.md §1's "no confusing internal currency on the
+// paying side"). This is a fixed, non-configurable display-only conversion
+// so those screens have a number to show — never used for money movement,
+// only for rendering. Deliberately separate from recharge_packages'
+// displayBeans (an admin-set marketing number per package, a volume bonus
+// that doesn't have to reconcile with this flat rate — same idea as
+// withdrawal slabs beating the base beans-earn rate at higher volumes).
+const DISPLAY_BEANS_PER_PAISE = 0.05; // 1 rupee (100 paise) = 5 display beans
+
+export function paiseToDisplayBeans(paise: number): number {
+  return Math.round(paise * DISPLAY_BEANS_PER_PAISE);
+}
+
 export async function creditUserWallet(
   userId: string,
   amountPaise: number,

@@ -5,7 +5,7 @@ import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
 import { broadcastPresence } from "../../realtime/socket";
 import { followHost, listFollowedHosts, unfollowHost } from "./follow.service";
-import { listHosts, HostListSort } from "./hosts.service";
+import { getHostDetail, listHosts, HostListSort } from "./hosts.service";
 import { setOffline, setOnline } from "./presence.store";
 
 export const hostsRouter = Router();
@@ -20,6 +20,7 @@ function parseHostId(raw: unknown): string {
 const listQuerySchema = z.object({
   onlineOnly: z.enum(["true", "false"]).optional(),
   sort: z.enum(["rate_asc", "rate_desc", "online_first", "rating_desc"]).optional(),
+  q: z.string().min(1).max(100).optional(), // Search screen — matches name or any spoken language
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(50).default(20),
 });
@@ -32,9 +33,18 @@ hostsRouter.get("/hosts", requireAuth, async (req, res, next) => {
   }
 
   try {
-    const { onlineOnly, sort, page, pageSize } = parsed.data;
-    const result = await listHosts({ onlineOnly: onlineOnly === "true", sort: sort as HostListSort | undefined, page, pageSize });
+    const { onlineOnly, sort, q, page, pageSize } = parsed.data;
+    const result = await listHosts({ onlineOnly: onlineOnly === "true", sort: sort as HostListSort | undefined, q, page, pageSize });
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Creator Profile screen (User app design follow-up).
+hostsRouter.get("/hosts/:hostId", requireAuth, async (req, res, next) => {
+  try {
+    res.json(await getHostDetail(parseHostId(req.params.hostId), req.user!.sub));
   } catch (err) {
     next(err);
   }

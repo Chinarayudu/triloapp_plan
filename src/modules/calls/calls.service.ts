@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { env } from "../../config/env";
 import { db } from "../../db/client";
 import { callBillingTicks, calls } from "../../db/schema";
@@ -10,6 +10,7 @@ import { emitToUser, isUserConnected } from "../../realtime/socket";
 import { areBlocked } from "../moderation/blocks.service";
 import { checkCallCollusion } from "../moderation/fraud.service";
 import { getHostProfile, getUserById } from "../users/users.service";
+import { getVipCallDiscountBasisPoints, isVipActive } from "../wallet/vip.service";
 import {
   getCurrentCommissionBasisPoints,
   getCurrentPaisePerBean,
@@ -55,6 +56,19 @@ export async function getCallById(callId: string): Promise<CallRow | undefined> 
   return call;
 }
 
+// User app design follow-up's Past Calls screen — this role of "list my
+// calls" previously only existed on the host side (earnings.service.ts's
+// getHostHistory).
+export async function listCallsForUser(
+  userId: string,
+  page: number,
+  pageSize: number,
+): Promise<{ calls: CallRow[]; total: number; page: number; pageSize: number }> {
+  const rows = await db.select().from(calls).where(eq(calls.userId, userId)).orderBy(desc(calls.createdAt));
+  const start = (page - 1) * pageSize;
+  return { calls: rows.slice(start, start + pageSize), total: rows.length, page, pageSize };
+}
+
 async function getActiveCallForUser(userId: string): Promise<CallRow | undefined> {
   const rows = await db.select().from(calls).where(eq(calls.userId, userId));
   return rows.find((c) => ACTIVE_STATUSES.includes(c.status));
@@ -84,10 +98,21 @@ export async function initiateCall(
   }
 
   const hostProfile = await getHostProfile(hostId);
-  const ratePerMinutePaise = type === "voice" ? hostProfile?.voiceRatePerMinutePaise : hostProfile?.ratePerMinutePaise;
-  if (!ratePerMinutePaise) {
+  const baseRatePerMinutePaise = type === "voice" ? hostProfile?.voiceRatePerMinutePaise : hostProfile?.ratePerMinutePaise;
+  if (!baseRatePerMinutePaise) {
     throw new AppError(400, `Host hasn't set a ${type} rate yet`);
   }
+
+  // VIP Rate benefit (User app design follow-up) — the discount reduces the
+  // price charged to the user, and everything downstream (commission, host
+  // beans) is computed from that same discounted amount via the unchanged
+  // commission math below: no separate "platform eats the discount" ledger
+  // entry, since no economics beyond "discount on all calls" is specified
+  // anywhere. Same simple "one conditional, one multiplication" treatment
+  // as every other money-path calculation in this function.
+  const ratePerMinutePaise = (await isVipActive(userId))
+    ? Math.round((baseRatePerMinutePaise * (10_000 - (await getVipCallDiscountBasisPoints()))) / 10_000)
+    : baseRatePerMinutePaise;
 
   if (!isOnline(hostId)) {
     throw new AppError(409, "Host is not online");

@@ -16,9 +16,10 @@ import {
   listPayoutMethods,
   setPrimaryPayoutMethod,
 } from "../hosts/payoutMethods.service";
+import { isVipActive } from "../wallet/vip.service";
 import { createSubmission, getLatestSubmission, getSubmissionDocuments } from "./kyc.service";
 import { getPreferences, updatePreferences } from "./notificationPreferences.service";
-import { getHostProfile, getUserById } from "./users.service";
+import { deleteOwnAccount, getHostProfile, getUserById, verifyOwnAge } from "./users.service";
 
 export const usersRouter = Router();
 
@@ -36,12 +37,15 @@ usersRouter.get("/me", requireAuth, async (req, res, next) => {
       id: user.id,
       role: user.role,
       phone: user.phone,
+      username: user.username,
       name: user.name,
       email: user.email,
       dob: user.dob,
       ageVerified: user.ageVerified,
+      languages: user.languages,
       kycStatus: user.kycStatus,
       status: user.status,
+      isVipActive: user.role === "user" ? await isVipActive(user.id) : undefined,
       hostProfile,
     });
   } catch (err) {
@@ -51,19 +55,57 @@ usersRouter.get("/me", requireAuth, async (req, res, next) => {
 
 const updateMeSchema = z.object({
   name: z.string().min(1).max(100).optional(),
+  username: z
+    .string()
+    .min(3)
+    .max(30)
+    .regex(/^[a-zA-Z0-9_]+$/, "Username can only contain letters, numbers, and underscores")
+    .optional(),
   email: z.string().email().optional(),
   dob: z.string().date().optional(),
+  languages: z.array(z.string().min(1)).max(20).optional(),
 });
 
 usersRouter.patch("/me", requireAuth, validateBody(updateMeSchema), async (req, res, next) => {
   try {
     const updates = req.body as z.infer<typeof updateMeSchema>;
+
+    if (updates.username) {
+      const [existing] = await db.select().from(users).where(eq(users.username, updates.username)).limit(1);
+      if (existing && existing.id !== req.user!.sub) throw new AppError(409, "Username is already taken");
+    }
+
     const [updated] = await db
       .update(users)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(users.id, req.user!.sub))
       .returning();
     res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Self-declared age verification for Users (User app design follow-up) —
+// a deliberate deviation from BR-ACC-04's "distinct from a self-declared
+// checkbox" bar; Hosts keep the KYC-reviewed path unchanged
+// (admin.service.ts's decideKyc). See BRD.md's amendment note on BR-ACC-04.
+usersRouter.post("/me/verify-age", requireAuth, requireRole("user"), async (req, res, next) => {
+  try {
+    res.json(await verifyOwnAge(req.user!.sub));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const deleteAccountSchema = z.object({ confirm: z.literal("DELETE") });
+
+// Never actually deletes the row — past calls/gifts/ledger entries keep a
+// valid (now-anonymized) owner. See users.service.ts's deleteOwnAccount.
+usersRouter.post("/me/delete-account", requireAuth, validateBody(deleteAccountSchema), async (req, res, next) => {
+  try {
+    await deleteOwnAccount(req.user!.sub);
+    res.json({ success: true });
   } catch (err) {
     next(err);
   }
@@ -77,6 +119,11 @@ const updateHostProfileSchema = z.object({
   privateLiveRatePerMinutePaise: z.number().int().positive().optional(),
   autoAcceptCalls: z.boolean().optional(),
   voiceCallsOnlyAfterMidnight: z.boolean().optional(),
+  // Creator Profile screen's structured sections (User app design follow-up).
+  languages: z.array(z.string().min(1)).max(20).optional(),
+  talksAboutTags: z.array(z.string().min(1)).max(20).optional(),
+  hobbies: z.array(z.string().min(1)).max(20).optional(),
+  sports: z.array(z.string().min(1)).max(20).optional(),
 });
 
 usersRouter.patch(
@@ -305,6 +352,9 @@ const notificationPreferencesSchema = z.object({
   withdrawalUpdates: z.boolean().optional(),
   weeklyEarningsSummary: z.boolean().optional(),
   promotionsAndTips: z.boolean().optional(),
+  liveAlerts: z.boolean().optional(),
+  callSummaries: z.boolean().optional(),
+  walletActivityAlerts: z.boolean().optional(),
   dndEnabled: z.boolean().optional(),
   dndStartHour: z.number().int().min(0).max(23).optional(),
   dndEndHour: z.number().int().min(0).max(23).optional(),

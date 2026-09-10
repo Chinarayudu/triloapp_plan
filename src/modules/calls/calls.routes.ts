@@ -4,7 +4,7 @@ import { AppError } from "../../lib/errors";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { perUserRateLimit } from "../../middleware/rateLimit";
 import { validateBody } from "../../middleware/validate";
-import { acceptCall, endCall, getCallById, initiateCall, rejectCall } from "./calls.service";
+import { acceptCall, endCall, getCallById, initiateCall, listCallsForUser, rejectCall } from "./calls.service";
 import { submitRating } from "./ratings.service";
 
 export const callsRouter = Router();
@@ -48,6 +48,27 @@ callsRouter.post(
     }
   },
 );
+
+const listCallsQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().positive().max(50).default(20),
+});
+
+// Past Calls screen (User app design follow-up).
+callsRouter.get("/me/calls", requireAuth, requireRole("user"), async (req, res, next) => {
+  const parsed = listCallsQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    next(new AppError(400, parsed.error.issues.map((i) => i.message).join(", ")));
+    return;
+  }
+
+  try {
+    const { page, pageSize } = parsed.data;
+    res.json(await listCallsForUser(req.user!.sub, page, pageSize));
+  } catch (err) {
+    next(err);
+  }
+});
 
 callsRouter.get("/calls/:id", requireAuth, async (req, res, next) => {
   try {

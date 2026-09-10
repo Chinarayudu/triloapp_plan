@@ -1,10 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { AppError } from "../../lib/errors";
+import { generateUploadUrl } from "../../lib/s3";
 import { requireAuth } from "../../middleware/auth";
 import { perUserRateLimit } from "../../middleware/rateLimit";
 import { validateBody } from "../../middleware/validate";
 import { blockUser, listBlocked, unblockUser } from "./blocks.service";
+import { submitGrievance } from "./grievance.service";
 import { createReport, logCaptureEvent } from "./moderation.service";
 
 export const moderationRouter = Router();
@@ -99,3 +102,71 @@ moderationRouter.post(
     }
   },
 );
+
+// The India IT-Rules-style formal grievance form (User app design
+// follow-up) — a slower-SLA, structured complaint distinct from
+// /moderation/reports above. Evidence upload reuses the same presign-then-
+// submit flow as KYC documents (users.routes.ts).
+const grievanceUploadExtensionByContentType: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "application/pdf": "pdf",
+};
+
+const grievanceUploadUrlSchema = z.object({
+  contentType: z.enum(Object.keys(grievanceUploadExtensionByContentType) as [string, ...string[]]),
+});
+
+moderationRouter.post(
+  "/grievances/upload-url",
+  requireAuth,
+  validateBody(grievanceUploadUrlSchema),
+  async (req, res, next) => {
+    try {
+      const { contentType } = req.body as z.infer<typeof grievanceUploadUrlSchema>;
+      const extension = grievanceUploadExtensionByContentType[contentType];
+      const key = `grievance-evidence/${req.user!.sub}/${randomUUID()}.${extension}`;
+      const uploadUrl = await generateUploadUrl(key, contentType);
+      res.json({ uploadUrl, key });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+const grievanceSchema = z.object({
+  firstName: z.string().min(1).max(100),
+  lastName: z.string().min(1).max(100),
+  contactNumber: z.string().min(5).max(20),
+  email: z.string().email(),
+  natureOfComplaint: z.enum([
+    "content_objection",
+    "nudity_pornography",
+    "reinstatement",
+    "copyright_violation",
+    "judicial_order",
+    "government_request",
+    "privacy",
+    "impersonation",
+    "child_safety",
+    "other",
+  ]),
+  description: z.string().min(1).max(5000),
+  evidenceKeys: z.array(z.string().min(1)).max(10).default([]),
+});
+
+moderationRouter.post("/grievances", requireAuth, validateBody(grievanceSchema), async (req, res, next) => {
+  try {
+    const body = req.body as z.infer<typeof grievanceSchema>;
+    for (const key of body.evidenceKeys) {
+      if (!key.startsWith(`grievance-evidence/${req.user!.sub}/`)) {
+        throw new AppError(403, "This evidence file does not belong to your account");
+      }
+    }
+
+    const grievance = await submitGrievance({ userId: req.user!.sub, ...body });
+    res.status(201).json(grievance);
+  } catch (err) {
+    next(err);
+  }
+});

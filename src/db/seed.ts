@@ -1,6 +1,16 @@
 import { eq } from "drizzle-orm";
 import { db, pool } from "./client";
-import { adultModeConfigs, beansEarnConfigs, commissionConfigs, gifts, withdrawalPolicyConfigs, withdrawalSlabs } from "./schema";
+import {
+  adultModeConfigs,
+  beansEarnConfigs,
+  commissionConfigs,
+  gifts,
+  rechargePackages,
+  vipConfigs,
+  vipPlans,
+  withdrawalPolicyConfigs,
+  withdrawalSlabs,
+} from "./schema";
 
 // Idempotent: only inserts if the table is empty, so this is safe to run
 // on every deploy rather than needing a "has this run before" tracker.
@@ -78,6 +88,47 @@ async function seed(): Promise<void> {
     console.log("Seeded adult mode config: disabled");
   } else {
     console.log("Adult mode config already present, skipping");
+  }
+
+  // Talktime screen's preset tiles (User app design follow-up) — per-price
+  // check, same reasoning as the gift catalog above.
+  const rechargeDefaults: Array<{ pricePaise: number; mrpPaise: number | null; displayBeans: number }> = [
+    { pricePaise: 19900, mrpPaise: null, displayBeans: 1000 },
+    { pricePaise: 44900, mrpPaise: 49900, displayBeans: 2600 },
+    { pricePaise: 89900, mrpPaise: 99900, displayBeans: 5400 },
+    { pricePaise: 174900, mrpPaise: 199900, displayBeans: 11000 },
+    { pricePaise: 399900, mrpPaise: 399900, displayBeans: 24000 },
+    { pricePaise: 899900, mrpPaise: 999900, displayBeans: 60000 },
+  ];
+  for (const pkg of rechargeDefaults) {
+    const [existing] = await db.select().from(rechargePackages).where(eq(rechargePackages.pricePaise, pkg.pricePaise)).limit(1);
+    if (!existing) {
+      await db.insert(rechargePackages).values(pkg);
+      console.log(`Seeded recharge package: ₹${pkg.pricePaise / 100} -> ${pkg.displayBeans} beans`);
+    }
+  }
+
+  // VIP Subscription screen's two plans (User app design follow-up).
+  const vipPlanDefaults: Array<{ name: string; durationDays: number; pricePaise: number }> = [
+    { name: "1 Month", durationDays: 30, pricePaise: 29900 },
+    { name: "3 Months", durationDays: 90, pricePaise: 79900 },
+  ];
+  for (const plan of vipPlanDefaults) {
+    const [existing] = await db.select().from(vipPlans).where(eq(vipPlans.name, plan.name)).limit(1);
+    if (!existing) {
+      await db.insert(vipPlans).values(plan);
+      console.log(`Seeded VIP plan: ${plan.name}`);
+    }
+  }
+
+  const existingVipConfig = await db.select().from(vipConfigs).limit(1);
+  if (existingVipConfig.length === 0) {
+    // No discount % is specified anywhere in the Figma — a placeholder,
+    // admin-tunable later (BR-ADM-02) without a deployment.
+    await db.insert(vipConfigs).values({ callDiscountBasisPoints: 1000 }); // 10%
+    console.log("Seeded VIP config: 10% call discount (placeholder)");
+  } else {
+    console.log("VIP config already present, skipping");
   }
 
   await pool.end();

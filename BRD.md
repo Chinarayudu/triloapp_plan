@@ -51,7 +51,7 @@ The core business mechanic: a user recharges real money into a wallet, spends it
 - In-house payment processing (a licensed gateway is used, not built).
 - Automated AI content moderation of live video (manual/report-based moderation only, for now).
 - Multi-currency/multi-region pricing (single-currency assumed initially — see Assumptions).
-- Subscription/membership pricing tiers (pure pay-per-use only, for now).
+- ~~Subscription/membership pricing tiers (pure pay-per-use only, for now).~~ **Reversed (User app design follow-up)**: VIP Subscriptions were built after all — see `BACKEND_PLAN.md`'s "User app design follow-up" section for scope (a real call-rate discount; "unlimited access"/"priority" benefits are just status flags, not wired to anything, since nothing they'd gate exists yet).
 
 ---
 
@@ -78,6 +78,7 @@ Each requirement is labeled `BR-<module>-<num>` for traceability.
 - **BR-ACC-02**: Users and Hosts shall authenticate via phone number (OTP), not username/password, to minimize account-sharing/fraud friction.
 - **BR-ACC-03**: Hosts shall complete KYC (identity document + payout account details) before being allowed to go online/available or request a withdrawal.
 - **BR-ACC-04**: The system shall capture and verify date of birth as part of KYC for both Users and Hosts, distinct from a self-declared checkbox, to support defensible age-gating (see BR-MOD-02).
+  - **Amended (User app design follow-up)**: for **Hosts**, this still means KYC-document-reviewed verification (unchanged, `admin.service.ts`'s `decideKyc`). For **Users**, the business decided to accept self-declared DOB verification instead (`POST /me/verify-age`, instant, no document review) — a deliberate deviation from this requirement as originally written, made explicitly aware of the tradeoff (self-declaration is not "defensible" the way a reviewed document is).
 - **BR-ACC-05**: Admin shall be able to suspend or ban any User or Host account, with the suspension taking effect immediately (in-progress sessions terminated, not just blocked from new logins).
 
 ### 5.2 Wallet & recharge
