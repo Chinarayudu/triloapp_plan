@@ -39,7 +39,7 @@ export function createAuthRouter(): Router {
   // Separate budget from OTP requests, and generous-but-bounded against
   // password-guessing (BACKEND_PLAN.md §8 "Rate limiting") — keyed by IP
   // since there's no authenticated identity yet at this point.
-  const adminLoginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 });
+  const adminLoginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
 
   authRouter.post("/otp/request", otpRequestLimiter, validateBody(phoneSchema), async (req, res, next) => {
     try {

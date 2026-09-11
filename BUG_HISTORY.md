@@ -20,6 +20,14 @@ Copy this for each new entry, filled in, added to the top of the log below.
 
 ## Log
 
+### [2026-09-11] Admin login 429 "Too many requests" during repeated testing
+
+**Symptom**: `POST /auth/admin/login` returns 429 after a handful of calls when re-running the Admin Postman/newman collection or otherwise logging in repeatedly during testing.
+**Root cause**: Not a bug — `adminLoginLimiter` (`auth.routes.ts`) is a deliberate brute-force guard capping `/auth/admin/login` to a fixed number of requests per 15 minutes per IP, and it counted every request, successful or not. Repeated legitimate test logins burned the same budget meant for blocking password guessing, so normal testing tripped it.
+**Affected files**: `src/modules/auth/auth.routes.ts`.
+**Fix**: Raised `adminLoginLimiter`'s `max` from 10 to 100 per 15-minute window (user's explicit choice after being offered the option to instead exempt successful logins from the count, or remove the limiter entirely — removal was rejected as a security regression on a route that gates access to money-moving admin functions). Brute-force protection remains in place, just looser.
+**Call sites checked**: `adminLoginLimiter` is only attached to `POST /auth/admin/login` (single call site) — no other route affected. Full `auth.test.ts` suite (8/8) and `tsc --noEmit` pass with the new limit.
+
 ### [2026-08-09] Pre-existing accounts missing wallet rows → 500 on any wallet-touching endpoint
 
 **Symptom**: `Error: No wallet row for user <id>` thrown from `wallet.service.ts`, surfacing as a 500 on `GET /wallet`, `POST /wallet/dev-credit`, and `POST /calls` (the pre-call balance check). Caught via the Postman collection's newman verification run, not a user report — the collection's example phone number happened to be an account created in an earlier phase, before the wallet tables existed.
