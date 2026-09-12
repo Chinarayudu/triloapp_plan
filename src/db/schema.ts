@@ -909,3 +909,31 @@ export const broadcastMessages = pgTable("broadcast_messages", {
     .references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ---------------------------------------------------------------------------
+// Notifications (Host app design follow-up — a durable activity feed).
+// Everything above delivers "live" via a socket event + push fallback but
+// keeps no record — fine for something you must see now (an incoming call),
+// wrong for something you should still be able to see later (a notification
+// center/history screen). This table is that durable record; the realtime
+// notification module (notifications.service.ts) inserts a row at the same
+// moment it already emits the transient socket event, it doesn't replace it.
+// ---------------------------------------------------------------------------
+
+export const notificationTypeEnum = pgEnum("notification_type", [
+  "gift_received",
+  "withdrawal_status",
+  "call_missed",
+]);
+
+export const notifications = pgTable("notifications", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  type: notificationTypeEnum("type").notNull(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  read: boolean("read").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

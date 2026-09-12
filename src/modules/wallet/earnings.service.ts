@@ -1,4 +1,5 @@
 import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import type { PgColumn } from "drizzle-orm/pg-core";
 import { db } from "../../db/client";
 import { callBillingTicks, calls, giftTransactions, gifts, hostWallets, ledgerEntries, liveBroadcasts, users } from "../../db/schema";
 
@@ -253,11 +254,24 @@ export async function getHostHistory(
   type: "all" | "calls" | "gifts" | "live",
   page: number,
   pageSize: number,
+  from?: Date,
+  to?: Date,
 ) {
   const items: HistoryItem[] = [];
+  const dateBounds = (column: PgColumn) => {
+    const bounds = [];
+    if (from) bounds.push(gte(column, from));
+    if (to) bounds.push(lt(column, to));
+    return bounds;
+  };
 
   if (type === "all" || type === "calls") {
-    const callRows = await db.select().from(calls).where(eq(calls.hostId, hostId)).orderBy(desc(calls.createdAt)).limit(200);
+    const callRows = await db
+      .select()
+      .from(calls)
+      .where(and(eq(calls.hostId, hostId), ...dateBounds(calls.createdAt)))
+      .orderBy(desc(calls.createdAt))
+      .limit(from || to ? 10_000 : 200);
     for (const c of callRows) {
       items.push({
         type: "call",
@@ -284,9 +298,15 @@ export async function getHostHistory(
       })
       .from(giftTransactions)
       .innerJoin(gifts, eq(gifts.id, giftTransactions.giftId))
-      .where(and(eq(giftTransactions.recipientId, hostId), giftContextFilter(["call", "chat"])))
+      .where(
+        and(
+          eq(giftTransactions.recipientId, hostId),
+          giftContextFilter(["call", "chat"]),
+          ...dateBounds(giftTransactions.createdAt),
+        ),
+      )
       .orderBy(desc(giftTransactions.createdAt))
-      .limit(200);
+      .limit(from || to ? 10_000 : 200);
     for (const g of giftRows) {
       items.push({
         type: "gift",
@@ -304,9 +324,11 @@ export async function getHostHistory(
     const broadcastRows = await db
       .select()
       .from(liveBroadcasts)
-      .where(and(eq(liveBroadcasts.hostId, hostId), eq(liveBroadcasts.status, "ended")))
+      .where(
+        and(eq(liveBroadcasts.hostId, hostId), eq(liveBroadcasts.status, "ended"), ...dateBounds(liveBroadcasts.endedAt)),
+      )
       .orderBy(desc(liveBroadcasts.endedAt))
-      .limit(50);
+      .limit(from || to ? 10_000 : 50);
     const paisePerBean = await getCurrentPaisePerBean();
     for (const b of broadcastRows) {
       const [{ total: beansTotal }] = await db
@@ -329,4 +351,47 @@ export async function getHostHistory(
   items.sort((a, b) => b.when.getTime() - a.when.getTime());
   const start = (page - 1) * pageSize;
   return { items: items.slice(start, start + pageSize), total: items.length, page, pageSize };
+}
+
+function csvField(value: string | number): string {
+  const str = String(value);
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
+function historyItemDetail(item: HistoryItem): string {
+  switch (item.type) {
+    case "call":
+      return `${item.callType} call (${item.status})`;
+    case "gift":
+      return `Gift: ${item.giftName}`;
+    case "live":
+      return `Live stream (${item.durationSeconds}s, peak ${item.peakViewers} viewers)`;
+  }
+}
+
+// v1 export (BR-EARN docs' "statement" ask) — reuses the exact same
+// aggregation (getHostEarningsBreakdown) and transaction list
+// (getHostHistory, given an explicit date range) the on-screen breakdown and
+// history tabs already compute; this only formats them as a CSV instead of
+// JSON. Generated on demand rather than persisted — regenerating is simple
+// enough that there's no "previous statements" list to keep in sync.
+export async function getHostEarningsStatementCsv(hostId: string, from: Date, to: Date): Promise<string> {
+  const breakdown = await getHostEarningsBreakdown(hostId, from, to);
+  const { items } = await getHostHistory(hostId, "all", 1, 10_000, from, to);
+
+  const lines: string[] = [];
+  lines.push("Trilo earnings statement");
+  lines.push(`Period,${from.toISOString()},${to.toISOString()}`);
+  lines.push("");
+  lines.push("Gross earnings (paise),Platform commission (paise),TDS (paise),Net payable (paise)");
+  lines.push(
+    [breakdown.grossEarningsPaise, breakdown.deductions.platformCommissionPaise, breakdown.deductions.tdsPaise, breakdown.netPayablePaise].join(","),
+  );
+  lines.push("");
+  lines.push("Date,Type,Details,Amount (paise),Beans");
+  for (const item of items) {
+    lines.push([item.when.toISOString(), item.type, csvField(historyItemDetail(item)), item.amountPaise, item.beans].join(","));
+  }
+
+  return lines.join("\n");
 }

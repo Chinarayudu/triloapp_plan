@@ -12,6 +12,7 @@ Backend for a three-sided video-chat platform (User app, Host app, Admin app —
 | [`DEVELOPMENT_ROADMAP.md`](DEVELOPMENT_ROADMAP.md) | Build phases, sequencing, timelines, contract-first collaboration model with frontend teams |
 | [`UX_SCREENS_AND_FLOWS.md`](UX_SCREENS_AND_FLOWS.md) | Screen-by-screen and flow-by-flow spec for the three frontend apps (handed to design/Figma, not backend-relevant beyond context) |
 | [`BUG_HISTORY.md`](BUG_HISTORY.md) | Log of every bug fixed in this repo — checked first on every new bug report |
+| [`REALTIME_EVENTS.md`](REALTIME_EVENTS.md) | Socket.IO event catalogue — every event name, trigger, target, and payload shape; update it whenever an event is added/renamed/changed |
 
 ## How to work in this repo — route based on what's being asked
 

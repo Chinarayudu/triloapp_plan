@@ -8,6 +8,7 @@ import { validateBody } from "../../middleware/validate";
 import { emitToRoom, emitToUser, isUserConnected } from "../../realtime/socket";
 import { getUserById } from "../users/users.service";
 import { liveRoomName } from "../live/live.service";
+import { createNotification } from "../notifications/notifications.service";
 import { listActiveGifts, sendGift } from "./gifts.service";
 
 export const giftsRouter = Router();
@@ -53,6 +54,7 @@ giftsRouter.post(
       if (!(await isUserConnected(recipientId))) {
         void sendPushNotification(recipientId, "Gift received", `You received a ${result.gift.name}!`);
       }
+      await createNotification(recipientId, "gift_received", "Gift received", `You received a ${result.gift.name}!`);
 
       // Live gifts are meant to be seen by everyone watching, not just the
       // host — the same event, additionally fanned out to the broadcast

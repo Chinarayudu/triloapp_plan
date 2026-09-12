@@ -9,6 +9,7 @@ import { sendPushNotification } from "../../lib/push";
 import { emitToUser, isUserConnected } from "../../realtime/socket";
 import { areBlocked } from "../moderation/blocks.service";
 import { checkCallCollusion } from "../moderation/fraud.service";
+import { createNotification } from "../notifications/notifications.service";
 import { getHostProfile, getUserById } from "../users/users.service";
 import { getVipCallDiscountBasisPoints, isVipActive } from "../wallet/vip.service";
 import {
@@ -83,11 +84,23 @@ function channelNameFor(callId: string): string {
   return `call-${callId}`;
 }
 
+// Same user -> name join used by /me/dashboard's recentCalls[].counterpartName
+// and /chat/conversations[].otherParticipant.name — calls were the one place
+// it had been left out, leaving every incoming-call/active-call/summary
+// screen showing a literal "Caller" instead of a name.
+export async function getCallParticipantNames(
+  userId: string,
+  hostId: string,
+): Promise<{ callerName: string; hostName: string }> {
+  const [caller, host] = await Promise.all([getUserById(userId), getUserById(hostId)]);
+  return { callerName: caller?.name ?? "Unknown", hostName: host?.name ?? "Unknown" };
+}
+
 export async function initiateCall(
   userId: string,
   hostId: string,
   type: CallRow["type"] = "video",
-): Promise<{ call: CallRow; channelName: string; agoraToken: string }> {
+): Promise<{ call: CallRow; channelName: string; agoraToken: string; hostName: string }> {
   const host = await getUserById(hostId);
   if (!host || host.role !== "host" || host.status !== "active") {
     throw new AppError(404, "Host not found");
@@ -132,6 +145,7 @@ export async function initiateCall(
 
   const commissionBasisPointsSnapshot = await getCurrentCommissionBasisPoints(hostId); // BR-COM-03: host override wins if active
   const paisePerBeanSnapshot = await getCurrentPaisePerBean();
+  const caller = await getUserById(userId);
 
   const [call] = await db
     .insert(calls)
@@ -151,6 +165,7 @@ export async function initiateCall(
   emitToUser(hostId, "call:incoming", {
     callId: call.id,
     userId,
+    callerName: caller?.name ?? "Unknown",
     ratePerMinutePaise: call.ratePerMinutePaiseSnapshot,
   });
   // "Online" (presence.store.ts) means the host toggled availability, not
@@ -162,13 +177,13 @@ export async function initiateCall(
   }
 
   const channelName = channelNameFor(call.id);
-  return { call, channelName, agoraToken: generateAgoraToken(channelName, userId) };
+  return { call, channelName, agoraToken: generateAgoraToken(channelName, userId), hostName: host.name ?? "Unknown" };
 }
 
 export async function acceptCall(
   callId: string,
   hostId: string,
-): Promise<{ call: CallRow; channelName: string; agoraToken: string }> {
+): Promise<{ call: CallRow; channelName: string; agoraToken: string; callerName: string }> {
   const call = await getCallById(callId);
   if (!call) throw new AppError(404, "Call not found");
   if (call.hostId !== hostId) throw new AppError(403, "Not your call");
@@ -187,7 +202,13 @@ export async function acceptCall(
   const channelName = channelNameFor(callId);
   emitToUser(call.userId, "call:accepted", { callId, channelName });
 
-  return { call: updated, channelName, agoraToken: generateAgoraToken(channelName, hostId) };
+  const caller = await getUserById(call.userId);
+  return {
+    call: updated,
+    channelName,
+    agoraToken: generateAgoraToken(channelName, hostId),
+    callerName: caller?.name ?? "Unknown",
+  };
 }
 
 export async function rejectCall(callId: string, hostId: string): Promise<CallRow> {
@@ -223,6 +244,8 @@ export async function endCall(callId: string, requesterId: string): Promise<Call
       .set({ status: "missed", endedAt: new Date(), endReason: "cancelled_by_caller", updatedAt: new Date() })
       .where(eq(calls.id, callId))
       .returning();
+    const caller = await getUserById(call.userId);
+    await createNotification(call.hostId, "call_missed", "Missed call", `You missed a call from ${caller?.name ?? "a user"}`);
   } else {
     stopBillingInterval(callId);
     const endReason = requesterId === call.hostId ? "ended_by_host" : "ended_by_user";
@@ -253,7 +276,13 @@ export async function expireRinging(callId: string): Promise<void> {
     .where(eq(calls.id, callId))
     .returning();
 
-  emitToUser(updated.userId, "call:ended", { callId, status: "missed", totalAmountPaise: 0, totalBeans: 0 });
+  const summary = { callId, status: "missed" as const, totalAmountPaise: 0, totalBeans: 0 };
+  emitToUser(updated.userId, "call:ended", summary);
+  // Without this, the host's incoming-call screen never learns the ring
+  // timed out — it has no event to react to and is stuck showing the call
+  // as still incoming.
+  emitToUser(updated.hostId, "call:ended", summary);
+  await createNotification(updated.hostId, "call_missed", "Missed call", `You missed a call from ${(await getUserById(updated.userId))?.name ?? "a user"}`);
 }
 
 async function endCallForInsufficientBalance(call: CallRow): Promise<void> {

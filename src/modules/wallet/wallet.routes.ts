@@ -6,9 +6,28 @@ import { AppError } from "../../lib/errors";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
 import { devResolveRecharge, getRechargeTxnById, initiateRecharge, listRechargePackages } from "./recharge.service";
-import { creditUserWallet, getHostBeanBalance, getUserWalletBalance, paiseToDisplayBeans } from "./wallet.service";
+import {
+  creditUserWallet,
+  getCurrentPaisePerBean,
+  getHostBeanBalance,
+  getUserWalletBalance,
+  paiseToDisplayBeans,
+} from "./wallet.service";
 
 export const walletRouter = Router();
+
+// The bean<->paise rate is admin-configurable and time-versioned
+// (beansEarnConfigs), not a fixed 1:1 — clients must read it here rather
+// than inferring it from a balance that could legitimately be zero.
+// Every call/gift snapshots its own rate at transaction time (calls.service.ts,
+// gifts.service.ts); this is only "what's the rate right now," for display.
+walletRouter.get("/config", requireAuth, async (_req, res, next) => {
+  try {
+    res.json({ paisePerBean: await getCurrentPaisePerBean() });
+  } catch (err) {
+    next(err);
+  }
+});
 
 walletRouter.get("/wallet", requireAuth, async (req, res, next) => {
   try {

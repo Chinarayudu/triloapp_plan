@@ -4,7 +4,15 @@ import { AppError } from "../../lib/errors";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { perUserRateLimit } from "../../middleware/rateLimit";
 import { validateBody } from "../../middleware/validate";
-import { acceptCall, endCall, getCallById, initiateCall, listCallsForUser, rejectCall } from "./calls.service";
+import {
+  acceptCall,
+  endCall,
+  getCallById,
+  getCallParticipantNames,
+  initiateCall,
+  listCallsForUser,
+  rejectCall,
+} from "./calls.service";
 import { submitRating } from "./ratings.service";
 
 export const callsRouter = Router();
@@ -35,14 +43,14 @@ callsRouter.post(
   async (req, res, next) => {
     try {
       const { hostId, type } = req.body as z.infer<typeof initiateSchema>;
-      const { call, channelName, agoraToken } = await initiateCall(req.user!.sub, hostId, type);
+      const { call, channelName, agoraToken, hostName } = await initiateCall(req.user!.sub, hostId, type);
       // secureMode (BACKEND_PLAN.md §5, BR-MOD-03) — always true for 1:1
       // calls, not conditional on the 18+ toggle: this whole platform is
       // treated as sensitive-by-default (BACKEND_PLAN.md §3), unlike a live
       // broadcast where only specifically-flagged content needs it.
       res
         .status(201)
-        .json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, agoraToken });
+        .json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, agoraToken, hostName });
     } catch (err) {
       next(err);
     }
@@ -77,7 +85,8 @@ callsRouter.get("/calls/:id", requireAuth, async (req, res, next) => {
     if (call.userId !== req.user!.sub && call.hostId !== req.user!.sub) {
       throw new AppError(403, "Not your call");
     }
-    res.json({ ...call, secureMode: true });
+    const { callerName, hostName } = await getCallParticipantNames(call.userId, call.hostId);
+    res.json({ ...call, secureMode: true, callerName, hostName });
   } catch (err) {
     next(err);
   }
@@ -85,8 +94,8 @@ callsRouter.get("/calls/:id", requireAuth, async (req, res, next) => {
 
 callsRouter.post("/calls/:id/accept", requireAuth, requireRole("host"), async (req, res, next) => {
   try {
-    const { call, channelName, agoraToken } = await acceptCall(parseCallId(req.params.id), req.user!.sub);
-    res.json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, agoraToken });
+    const { call, channelName, agoraToken, callerName } = await acceptCall(parseCallId(req.params.id), req.user!.sub);
+    res.json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, agoraToken, callerName });
   } catch (err) {
     next(err);
   }

@@ -18,6 +18,7 @@ import {
 } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { writeAuditLog } from "../../lib/auditLog";
+import { emitToUser } from "../../realtime/socket";
 import { hashPassword } from "../../lib/password";
 import { disconnectUser } from "../../realtime/socket";
 import { revokeAllRefreshTokensForUser } from "../auth/token.service";
@@ -90,6 +91,7 @@ export async function decideKyc(
     attemptNumber: submission.attemptNumber,
     ...(reason ? { reason } : {}),
   });
+  emitToUser(userId, "kyc:decision", { status: updated.kycStatus, reason: reason ?? null });
   return updated;
 }
 

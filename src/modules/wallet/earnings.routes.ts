@@ -2,7 +2,13 @@ import { Router } from "express";
 import { z } from "zod";
 import { AppError } from "../../lib/errors";
 import { requireAuth, requireRole } from "../../middleware/auth";
-import { getHostDashboard, getHostEarningsBreakdown, getHostEarningsSummary, getHostHistory } from "./earnings.service";
+import {
+  getHostDashboard,
+  getHostEarningsBreakdown,
+  getHostEarningsStatementCsv,
+  getHostEarningsSummary,
+  getHostHistory,
+} from "./earnings.service";
 
 export const earningsRouter = Router();
 
@@ -40,6 +46,38 @@ earningsRouter.get("/me/earnings/breakdown", requireAuth, requireRole("host"), a
     const from = parsed.data.from ? new Date(parsed.data.from) : defaultFrom;
     const to = parsed.data.to ? new Date(parsed.data.to) : now;
     res.json(await getHostEarningsBreakdown(req.user!.sub, from, to));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const statementQuerySchema = z.object({
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+});
+
+// v1 export — CSV only (a same-day job vs. PDF's rendering step); reuses
+// the exact same default-period logic as /me/earnings/breakdown above.
+earningsRouter.get("/me/earnings/statement", requireAuth, requireRole("host"), async (req, res, next) => {
+  const parsed = statementQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    next(new AppError(400, parsed.error.issues.map((i) => i.message).join(", ")));
+    return;
+  }
+
+  try {
+    const now = new Date();
+    const defaultFrom = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const from = parsed.data.from ? new Date(parsed.data.from) : defaultFrom;
+    const to = parsed.data.to ? new Date(parsed.data.to) : now;
+    const csv = await getHostEarningsStatementCsv(req.user!.sub, from, to);
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="statement-${from.toISOString().slice(0, 10)}-to-${to.toISOString().slice(0, 10)}.csv"`,
+    );
+    res.send(csv);
   } catch (err) {
     next(err);
   }

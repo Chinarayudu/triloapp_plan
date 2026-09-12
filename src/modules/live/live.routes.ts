@@ -13,6 +13,7 @@ import {
   assertCanChat,
   endBroadcast,
   getBroadcastById,
+  getConcurrentViewerCount,
   joinBroadcast,
   leaveBroadcast,
   listLiveBroadcasts,
@@ -67,6 +68,10 @@ liveRouter.post(
       const broadcast = await startBroadcast(req.user!.sub, isAdultContent);
       await notifyFollowersHostWentLive(req.user!.sub, broadcast.id);
       const channelName = liveRoomName(broadcast.id);
+      // Viewers join this room via POST /join below; without also joining
+      // the host, io.to(channelName).emit(...) (live:chat, gift:received)
+      // never reaches the one person actually running the broadcast.
+      await joinUserToRoom(req.user!.sub, channelName);
       res.status(201).json({
         broadcastId: broadcast.id,
         status: broadcast.status,
@@ -152,7 +157,14 @@ liveRouter.post(
       await assertCanChat(broadcastId, req.user!.sub);
 
       const { content } = req.body as z.infer<typeof liveChatSchema>;
-      const payload = { broadcastId, senderId: req.user!.sub, content, createdAt: new Date().toISOString() };
+      const sender = await getUserById(req.user!.sub);
+      const payload = {
+        broadcastId,
+        senderId: req.user!.sub,
+        senderName: sender?.name ?? "Unknown",
+        content,
+        createdAt: new Date().toISOString(),
+      };
       emitToRoom(liveRoomName(broadcastId), "live:chat", payload);
 
       res.status(201).json(payload);
@@ -167,7 +179,8 @@ liveRouter.get("/live/broadcasts/:id", requireAuth, async (req, res, next) => {
     const broadcastId = parseBroadcastId(req.params.id);
     const broadcast = await getBroadcastById(broadcastId);
     if (!broadcast) throw new AppError(404, "Broadcast not found");
-    res.json(broadcast);
+    const viewerCount = await getConcurrentViewerCount(broadcastId);
+    res.json({ ...broadcast, viewerCount });
   } catch (err) {
     next(err);
   }

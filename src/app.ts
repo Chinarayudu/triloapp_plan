@@ -12,6 +12,7 @@ import { giftsRouter } from "./modules/gifts/gifts.routes";
 import { hostsRouter } from "./modules/hosts/hosts.routes";
 import { liveRouter } from "./modules/live/live.routes";
 import { moderationRouter } from "./modules/moderation/moderation.routes";
+import { notificationsRouter } from "./modules/notifications/notifications.routes";
 import { usersRouter } from "./modules/users/users.routes";
 import { earningsRouter } from "./modules/wallet/earnings.routes";
 import { vipRouter } from "./modules/wallet/vip.routes";
@@ -40,6 +41,7 @@ export function createApp(): Express {
   app.use(liveRouter);
   app.use(withdrawalsRouter);
   app.use(moderationRouter);
+  app.use(notificationsRouter);
   app.use(adminRouter);
 
   app.use(notFoundHandler);

@@ -6,6 +6,7 @@ import { initiatePayout } from "../../lib/payout";
 import { sendPushNotification } from "../../lib/push";
 import { emitToUser, isUserConnected } from "../../realtime/socket";
 import { getPrimaryPayoutMethod } from "../hosts/payoutMethods.service";
+import { createNotification } from "../notifications/notifications.service";
 import { creditHostBeans, debitHostBeans } from "../wallet/wallet.service";
 
 type WithdrawalRequest = typeof withdrawalRequests.$inferSelect;
@@ -21,6 +22,12 @@ async function notifyWithdrawalStatus(request: WithdrawalRequest): Promise<void>
   if (!(await isUserConnected(request.hostId))) {
     void sendPushNotification(request.hostId, "Withdrawal update", `Your withdrawal is now ${request.status}`);
   }
+  await createNotification(
+    request.hostId,
+    "withdrawal_status",
+    "Withdrawal update",
+    `Your withdrawal is now ${request.status}`,
+  );
 }
 
 export async function getActiveWithdrawalPolicy() {

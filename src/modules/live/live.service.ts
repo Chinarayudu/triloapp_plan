@@ -126,7 +126,7 @@ export async function listLiveBroadcasts(viewerAgeVerified: boolean) {
   return result;
 }
 
-async function getConcurrentViewerCount(broadcastId: string): Promise<number> {
+export async function getConcurrentViewerCount(broadcastId: string): Promise<number> {
   const active = await db
     .select()
     .from(liveViewers)

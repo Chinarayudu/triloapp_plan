@@ -44,3 +44,15 @@ export async function generateDownloadUrl(key: string): Promise<string> {
   const command = new GetObjectCommand({ Bucket: env.AWS_S3_BUCKET_NAME, Key: key });
   return getSignedUrl(client, command, { expiresIn: DOWNLOAD_URL_EXPIRY_SECONDS });
 }
+
+// Gallery media is meant to be publicly viewable on a host's profile,
+// unlike KYC docs — this builds the final URL to store, not a short-lived
+// presigned one. Requires the bucket (or this key's prefix) to actually be
+// configured public-read; that's an S3 bucket-policy setting, not something
+// this code can enforce.
+export function getPublicUrl(key: string): string {
+  if (env.AWS_S3_ENDPOINT) {
+    return `${env.AWS_S3_ENDPOINT}/${env.AWS_S3_BUCKET_NAME}/${key}`; // MinIO path-style (CI/local dev)
+  }
+  return `https://${env.AWS_S3_BUCKET_NAME}.s3.${env.AWS_REGION}.amazonaws.com/${key}`;
+}

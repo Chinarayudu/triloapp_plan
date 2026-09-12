@@ -5,7 +5,7 @@ import { z } from "zod";
 import { db } from "../../db/client";
 import { hostProfiles, payoutMethods, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
-import { generateUploadUrl } from "../../lib/s3";
+import { generateUploadUrl, getPublicUrl } from "../../lib/s3";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
 import { getHostRatingSummary } from "../calls/ratings.service";
@@ -165,6 +165,39 @@ usersRouter.post(
     try {
       const { mediaType, url, durationSeconds } = req.body as z.infer<typeof addGalleryItemSchema>;
       res.status(201).json(await addGalleryItem(req.user!.sub, mediaType, url, durationSeconds));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Same presign flow as /me/kyc/upload-url, reusing the same generateUploadUrl
+// helper with a gallery/{hostId}/... key prefix so gallery and KYC files
+// never share a namespace. Unlike KYC, the resulting url is meant to be
+// public (shown on a host's profile), so this also returns the final url
+// to submit to POST /me/host-profile/gallery, not just the key.
+const GALLERY_EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "video/mp4": "mp4",
+};
+
+const galleryUploadUrlSchema = z.object({
+  contentType: z.enum(Object.keys(GALLERY_EXTENSION_BY_CONTENT_TYPE) as [string, ...string[]]),
+});
+
+usersRouter.post(
+  "/me/host-profile/gallery/upload-url",
+  requireAuth,
+  requireRole("host"),
+  validateBody(galleryUploadUrlSchema),
+  async (req, res, next) => {
+    try {
+      const { contentType } = req.body as z.infer<typeof galleryUploadUrlSchema>;
+      const extension = GALLERY_EXTENSION_BY_CONTENT_TYPE[contentType];
+      const key = `gallery/${req.user!.sub}/${randomUUID()}.${extension}`;
+      const uploadUrl = await generateUploadUrl(key, contentType);
+      res.json({ uploadUrl, key, url: getPublicUrl(key) });
     } catch (err) {
       next(err);
     }
