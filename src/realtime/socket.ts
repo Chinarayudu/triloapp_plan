@@ -2,6 +2,7 @@ import type { Server as HttpServer } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
 import { verifyAccessToken } from "../lib/jwt";
 import { logger } from "../lib/logger";
+import { isOnline as isHostMarkedOnline, setOffline as setHostOffline } from "../modules/hosts/presence.store";
 
 // Module-level singleton, same shape as db/client.ts's `pool`/`db` exports —
 // one Socket.io server per process, created once at startup, read from
@@ -30,8 +31,31 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
     // notification (or any future per-user event) can be targeted at
     // exactly one account without the server tracking socket ids itself —
     // Socket.io's room membership does that bookkeeping for us.
-    socket.join(`user:${socket.data.user.sub}`);
-    logger.debug({ userId: socket.data.user?.sub }, "socket connected");
+    const userId = socket.data.user.sub;
+    socket.join(`user:${userId}`);
+    logger.debug({ userId }, "socket connected");
+
+    // A host's "online" flag (presence.store.ts) is only ever set/cleared by
+    // the explicit PATCH /me/presence toggle — nothing previously corrected
+    // it when their connection just dropped (closed tab, backgrounded app,
+    // network loss) without them toggling offline first. That left them
+    // "online" indefinitely: initiateCall's isOnline() check would keep
+    // passing, a caller's ringing call would get created, emitToUser would
+    // silently reach no one (no live socket), and the push fallback is a
+    // dev-mode log line, not a real notification (lib/push.ts) — so the
+    // call rang into the void with no visible failure to either side.
+    // Auto-clearing it here (once no other tab/session for this account is
+    // still connected) makes initiateCall's check fail fast and honestly
+    // ("Host is not online") instead of that silent no-op.
+    socket.on("disconnect", async () => {
+      logger.debug({ userId }, "socket disconnected");
+      if (!isHostMarkedOnline(userId)) return;
+      const stillConnected = io ? (await io.in(`user:${userId}`).fetchSockets()).length > 0 : false;
+      if (!stillConnected) {
+        setHostOffline(userId);
+        broadcastPresence(userId, false);
+      }
+    });
   });
 
   return io;

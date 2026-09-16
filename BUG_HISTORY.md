@@ -20,6 +20,15 @@ Copy this for each new entry, filled in, added to the top of the log below.
 
 ## Log
 
+### [2026-09-16] Host never receives an incoming call — rings out with no visible error on either side
+
+**Symptom**: User calls a host who is shown as online; the call is accepted by the backend (no error to the caller) but the host's app never shows anything — no incoming-call screen, no notification. The call eventually times out/misses.
+**Root cause**: `presence.store.ts`'s online flag was only ever set/cleared by the explicit `PATCH /me/presence` toggle. Nothing corrected it when a host's live connection dropped without them toggling offline first (closed tab, backgrounded app, network loss, dev-server hot reload during testing). `initiateCall`'s `isOnline()` gate kept passing for a host who was actually unreachable; `emitToUser` (`realtime/socket.ts`) silently reaches no one when there's no live socket in that user's room; and the push-notification fallback (`lib/push.ts`) is a dev-mode log line only, not a real delivery mechanism — so the ring had no visible failure anywhere.
+**Affected files**: `src/realtime/socket.ts` (fix), `src/modules/hosts/presence.store.ts` (unchanged, just read/written from a new call site), `src/modules/hosts/presence.socket.test.ts` (new regression test).
+**Fix**: On a socket's `disconnect`, if that account has no other live connection remaining, it's now auto-marked offline and `presence:update` broadcasts the change — the same effect as the explicit toggle. `initiateCall` then fails fast and honestly with `409 "Host is not online"` instead of creating a call that can never be delivered.
+**Call sites checked**: `isOnline`/`setOffline` (`presence.store.ts`) — only other caller is `hosts.routes.ts`'s `PATCH /me/presence` handler, unaffected. `broadcastPresence` — same single existing caller plus this new one, same event/payload shape. Full suite (127/127, including the new disconnect-triggered test) and `tsc --noEmit` pass.
+**General lesson**: any "is this account reachable" flag that's set by an explicit action needs an equally-reliable path back to false when the underlying condition it's tracking (a live connection, in this case) goes away on its own — otherwise it silently drifts stale, and whatever gates on it (like a call-initiation check) starts lying.
+
 ### [2026-09-11] Admin login 429 "Too many requests" during repeated testing
 
 **Symptom**: `POST /auth/admin/login` returns 429 after a handful of calls when re-running the Admin Postman/newman collection or otherwise logging in repeatedly during testing.

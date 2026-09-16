@@ -9,7 +9,7 @@ import { fundUserWallet, randomPhone, registerAndLogin, registerAndLoginAdmin } 
 // "pending" for these admin-decision tests.
 async function submitFakeKyc(app: ReturnType<typeof createApp>, accessToken: string, userId: string): Promise<void> {
   const res = await request(app)
-    .post("/me/kyc")
+    .post("/host/me/kyc")
     .set("Authorization", `Bearer ${accessToken}`)
     .send({
       documents: [
@@ -26,7 +26,7 @@ describe("Admin: KYC approval queue", () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
     await request(app)
-      .patch("/me")
+      .patch("/host/me")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ dob: "1995-05-05" });
     await submitFakeKyc(app, host.accessToken, host.user.id);
@@ -109,7 +109,7 @@ describe("Admin: sub-admin RBAC (BR-ADM-03)", () => {
     expect(created.body.role).toBe("sub_admin");
     expect(created.body.permissions).toEqual(["moderation"]);
 
-    const login = await request(app).post("/auth/admin/login").send({ email, password: "a-strong-password" });
+    const login = await request(app).post("/admin/auth/login").send({ email, password: "a-strong-password" });
     expect(login.status).toBe(200);
     expect(login.body.user.id).toBe(created.body.id);
 
@@ -163,12 +163,12 @@ describe("Admin: pricing/economics config (BR-ADM-02)", () => {
     const host = await registerAndLogin(app, "host");
     const sender = await registerAndLogin(app, "user");
 
-    const giftsRes = await request(app).get("/gifts").set("Authorization", `Bearer ${sender.accessToken}`);
+    const giftsRes = await request(app).get("/user/gifts").set("Authorization", `Bearer ${sender.accessToken}`);
     const rose = giftsRes.body.gifts.find((g: { name: string }) => g.name === "Rose"); // ₹10 = 1000 paise
 
     await fundUserWallet(app, sender.accessToken, rose.pricePaise);
     const beforeOverride = await request(app)
-      .post("/gifts/send")
+      .post("/user/gifts/send")
       .set("Authorization", `Bearer ${sender.accessToken}`)
       .send({ recipientId: host.user.id, giftId: rose.id });
     expect(beforeOverride.body.beansCredited).toBe(800); // seeded global 20%: 1000 - 200 = 800
@@ -182,7 +182,7 @@ describe("Admin: pricing/economics config (BR-ADM-02)", () => {
 
     await fundUserWallet(app, sender.accessToken, rose.pricePaise);
     const afterOverride = await request(app)
-      .post("/gifts/send")
+      .post("/user/gifts/send")
       .set("Authorization", `Bearer ${sender.accessToken}`)
       .send({ recipientId: host.user.id, giftId: rose.id });
     expect(afterOverride.body.beansCredited).toBe(950); // 5%: 1000 - 50 = 950
@@ -190,7 +190,7 @@ describe("Admin: pricing/economics config (BR-ADM-02)", () => {
     const otherHost = await registerAndLogin(app, "host");
     await fundUserWallet(app, sender.accessToken, rose.pricePaise);
     const otherHostGift = await request(app)
-      .post("/gifts/send")
+      .post("/user/gifts/send")
       .set("Authorization", `Bearer ${sender.accessToken}`)
       .send({ recipientId: otherHost.user.id, giftId: rose.id });
     expect(otherHostGift.body.beansCredited).toBe(800); // unaffected — still the global rate
@@ -270,7 +270,7 @@ describe("Admin: 18+ toggle (BR-MOD-01)", () => {
       .send({ enabled: true });
     expect(created.status).toBe(201);
 
-    const after = await request(app).get("/live/adult-mode").set("Authorization", `Bearer ${admin.accessToken}`);
+    const after = await request(app).get("/user/live/adult-mode").set("Authorization", `Bearer ${admin.accessToken}`);
     expect(after.body.enabled).toBe(true);
 
     await request(app)
@@ -293,7 +293,7 @@ describe("Admin: gift catalog CRUD (BR-ADM-02)", () => {
     expect(created.body.active).toBe(true);
 
     const user = await registerAndLogin(app, "user");
-    const catalogBefore = await request(app).get("/gifts").set("Authorization", `Bearer ${user.accessToken}`);
+    const catalogBefore = await request(app).get("/user/gifts").set("Authorization", `Bearer ${user.accessToken}`);
     expect(catalogBefore.body.gifts.some((g: { id: string }) => g.id === created.body.id)).toBe(true);
 
     const deactivated = await request(app)
@@ -303,7 +303,7 @@ describe("Admin: gift catalog CRUD (BR-ADM-02)", () => {
     expect(deactivated.status).toBe(200);
     expect(deactivated.body.active).toBe(false);
 
-    const catalogAfter = await request(app).get("/gifts").set("Authorization", `Bearer ${user.accessToken}`);
+    const catalogAfter = await request(app).get("/user/gifts").set("Authorization", `Bearer ${user.accessToken}`);
     expect(catalogAfter.body.gifts.some((g: { id: string }) => g.id === created.body.id)).toBe(false);
 
     const adminView = await request(app).get("/admin/gifts").set("Authorization", `Bearer ${admin.accessToken}`);
@@ -324,12 +324,12 @@ describe("Admin: account suspension (BR-ACC-05, BR-MOD-05)", () => {
     expect(suspended.status).toBe(200);
     expect(suspended.body.status).toBe("suspended");
 
-    const refreshAttempt = await request(app).post("/auth/token/refresh").send({ refreshToken: user.refreshToken });
+    const refreshAttempt = await request(app).post("/user/auth/token/refresh").send({ refreshToken: user.refreshToken });
     expect(refreshAttempt.status).toBe(401);
 
-    const loginAttempt = await request(app).post("/auth/otp/request").send({ phone: user.user.phone });
+    const loginAttempt = await request(app).post("/user/auth/otp/request").send({ phone: user.user.phone });
     const verifyAttempt = await request(app)
-      .post("/auth/otp/verify")
+      .post("/user/auth/otp/verify")
       .send({ phone: user.user.phone, code: loginAttempt.body.devCode, role: "user" });
     expect(verifyAttempt.status).toBe(403);
   });
@@ -416,18 +416,20 @@ describe("Admin: audit log and dashboard (BR-ADM-01, BR-ADM-04)", () => {
     const app = createApp();
     const user = await registerAndLogin(app, "user");
     const host = await registerAndLogin(app, "host");
-    await fundUserWallet(app, user.accessToken, 300000);
 
     // Send a stack of the most expensive gift (not just one Rose) so this
     // host's total dominates the ranking — topEarningHosts is a top-10 cut,
     // and the full suite runs test files concurrently against the same DB,
     // so other files' hosts can otherwise crowd this one out of the top 10.
-    const giftsRes = await request(app).get("/gifts").set("Authorization", `Bearer ${user.accessToken}`);
+    const giftsRes = await request(app).get("/user/gifts").set("Authorization", `Bearer ${user.accessToken}`);
     const crown = giftsRes.body.gifts.find((g: { name: string }) => g.name === "Crown");
     const giftSendCount = 10;
+    // Funded off the gift's real (seeded) price rather than a hardcoded
+    // guess, so this doesn't silently under-fund again if that price changes.
+    await fundUserWallet(app, user.accessToken, crown.pricePaise * giftSendCount);
     for (let i = 0; i < giftSendCount; i++) {
       const sent = await request(app)
-        .post("/gifts/send")
+        .post("/user/gifts/send")
         .set("Authorization", `Bearer ${user.accessToken}`)
         .send({ recipientId: host.user.id, giftId: crown.id });
       expect(sent.status).toBe(201);

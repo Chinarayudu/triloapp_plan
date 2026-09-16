@@ -7,13 +7,18 @@ import { registerAndLogin, registerAndLoginAdmin } from "../../test/helpers";
 // with a dob on file (admin.service.ts's decideKyc, BR-ACC-04) — same
 // mechanism used across the Phase 9 admin tests, reused here rather than
 // inventing a shortcut.
-async function verifyAge(app: ReturnType<typeof createApp>, accessToken: string, userId: string): Promise<void> {
+async function verifyAge(
+  app: ReturnType<typeof createApp>,
+  accessToken: string,
+  userId: string,
+  role: "user" | "host" = "user",
+): Promise<void> {
   await request(app)
-    .patch("/me")
+    .patch(`/${role}/me`)
     .set("Authorization", `Bearer ${accessToken}`)
     .send({ dob: "1990-01-01" });
   await request(app)
-    .post("/me/kyc")
+    .post(`/${role}/me/kyc`)
     .set("Authorization", `Bearer ${accessToken}`)
     .send({ documents: [{ documentType: "id_front", key: `kyc/${userId}/front.pdf` }] });
 
@@ -42,7 +47,7 @@ describe("Live broadcasting: 18+ content gating (BR-MOD-01/02)", () => {
       .send({ enabled: false });
 
     const res = await request(app)
-      .post("/live/broadcasts")
+      .post("/host/live/broadcasts")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ isAdultContent: true });
     expect(res.status).toBe(403);
@@ -59,21 +64,21 @@ describe("Live broadcasting: 18+ content gating (BR-MOD-01/02)", () => {
       .send({ enabled: true });
     expect(enabled.status).toBe(201);
 
-    const modeStatus = await request(app).get("/live/adult-mode").set("Authorization", `Bearer ${admin.accessToken}`);
+    const modeStatus = await request(app).get("/user/live/adult-mode").set("Authorization", `Bearer ${admin.accessToken}`);
     expect(modeStatus.body.enabled).toBe(true);
 
     const host = await registerAndLogin(app, "host");
     const unverifiedAttempt = await request(app)
-      .post("/live/broadcasts")
+      .post("/host/live/broadcasts")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ isAdultContent: true });
     expect(unverifiedAttempt.status).toBe(403);
     expect(unverifiedAttempt.body.error).toMatch(/age verification required/i);
 
-    await verifyAge(app, host.accessToken, host.user.id);
+    await verifyAge(app, host.accessToken, host.user.id, "host");
 
     const started = await request(app)
-      .post("/live/broadcasts")
+      .post("/host/live/broadcasts")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ isAdultContent: true });
     expect(started.status).toBe(201);
@@ -82,11 +87,11 @@ describe("Live broadcasting: 18+ content gating (BR-MOD-01/02)", () => {
     const broadcastId = started.body.broadcastId;
 
     const unverifiedViewer = await registerAndLogin(app, "user");
-    const list1 = await request(app).get("/live/broadcasts").set("Authorization", `Bearer ${unverifiedViewer.accessToken}`);
+    const list1 = await request(app).get("/user/live/broadcasts").set("Authorization", `Bearer ${unverifiedViewer.accessToken}`);
     expect(list1.body.broadcasts.some((b: { id: string }) => b.id === broadcastId)).toBe(false);
 
     const joinBlocked = await request(app)
-      .post(`/live/broadcasts/${broadcastId}/join`)
+      .post(`/user/live/broadcasts/${broadcastId}/join`)
       .set("Authorization", `Bearer ${unverifiedViewer.accessToken}`);
     expect(joinBlocked.status).toBe(403);
     expect(joinBlocked.body.error).toMatch(/age verification required/i);
@@ -94,11 +99,11 @@ describe("Live broadcasting: 18+ content gating (BR-MOD-01/02)", () => {
     const verifiedViewer = await registerAndLogin(app, "user");
     await verifyAge(app, verifiedViewer.accessToken, verifiedViewer.user.id);
 
-    const list2 = await request(app).get("/live/broadcasts").set("Authorization", `Bearer ${verifiedViewer.accessToken}`);
+    const list2 = await request(app).get("/user/live/broadcasts").set("Authorization", `Bearer ${verifiedViewer.accessToken}`);
     expect(list2.body.broadcasts.some((b: { id: string }) => b.id === broadcastId)).toBe(true);
 
     const joinAllowed = await request(app)
-      .post(`/live/broadcasts/${broadcastId}/join`)
+      .post(`/user/live/broadcasts/${broadcastId}/join`)
       .set("Authorization", `Bearer ${verifiedViewer.accessToken}`);
     expect(joinAllowed.status).toBe(200);
     expect(joinAllowed.body.secureMode).toBe(true);

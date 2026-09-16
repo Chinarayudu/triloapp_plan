@@ -13,10 +13,15 @@ export function randomPhone(): string {
 }
 
 export async function registerAndLogin(app: Express, role: "user" | "host" = "user") {
+  // Auth is namespaced by app (API-design follow-up) — /user/auth/... and
+  // /host/auth/... are the same underlying OTP router mounted twice
+  // (app.ts), so either prefix works for either role; using the one that
+  // matches `role` keeps tests reading like a real client of that app.
+  const prefix = role === "host" ? "/host" : "/user";
   const phone = randomPhone();
-  const requestRes = await request(app).post("/auth/otp/request").send({ phone });
+  const requestRes = await request(app).post(`${prefix}/auth/otp/request`).send({ phone });
   const verifyRes = await request(app)
-    .post("/auth/otp/verify")
+    .post(`${prefix}/auth/otp/verify`)
     .send({ phone, code: requestRes.body.devCode, role });
 
   return verifyRes.body as {
@@ -28,7 +33,7 @@ export async function registerAndLogin(app: Express, role: "user" | "host" = "us
 
 export async function fundUserWallet(app: Express, accessToken: string, amountPaise: number): Promise<number> {
   const res = await request(app)
-    .post("/wallet/dev-credit")
+    .post("/user/wallet/dev-credit")
     .set("Authorization", `Bearer ${accessToken}`)
     .send({ amountPaise });
   return res.body.balancePaise as number;

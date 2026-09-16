@@ -32,7 +32,7 @@ describe("KYC document upload", () => {
 
     async function uploadOne(fileContent: string) {
       const uploadUrlRes = await request(app)
-        .post("/me/kyc/upload-url")
+        .post("/user/me/kyc/upload-url")
         .set("Authorization", `Bearer ${accessToken}`)
         .send({ contentType: "application/pdf" });
       expect(uploadUrlRes.status).toBe(200);
@@ -54,7 +54,7 @@ describe("KYC document upload", () => {
     const selfieKey = await uploadOne(selfieContent);
 
     const submitRes = await request(app)
-      .post("/me/kyc")
+      .post("/user/me/kyc")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({
         documents: [
@@ -66,7 +66,7 @@ describe("KYC document upload", () => {
     expect(submitRes.body.kycStatus).toBe("pending");
     expect(submitRes.body.attemptNumber).toBe(1);
 
-    const viewRes = await request(app).get("/me/kyc").set("Authorization", `Bearer ${accessToken}`);
+    const viewRes = await request(app).get("/user/me/kyc").set("Authorization", `Bearer ${accessToken}`);
     expect(viewRes.status).toBe(200);
     expect(viewRes.body.kycStatus).toBe("pending");
     expect(viewRes.body.attemptNumber).toBe(1);
@@ -80,7 +80,7 @@ describe("KYC document upload", () => {
   it("returns no documents when nothing has been submitted yet", async () => {
     const app = createApp();
     const { accessToken } = await registerAndLogin(app);
-    const res = await request(app).get("/me/kyc").set("Authorization", `Bearer ${accessToken}`);
+    const res = await request(app).get("/user/me/kyc").set("Authorization", `Bearer ${accessToken}`);
     expect(res.status).toBe(200);
     expect(res.body.kycStatus).toBe("not_submitted");
     expect(res.body.attemptNumber).toBeNull();
@@ -91,7 +91,7 @@ describe("KYC document upload", () => {
     const app = createApp();
     const { accessToken } = await registerAndLogin(app);
     const res = await request(app)
-      .post("/me/kyc/upload-url")
+      .post("/user/me/kyc/upload-url")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ contentType: "text/plain" });
     expect(res.status).toBe(400);
@@ -101,7 +101,7 @@ describe("KYC document upload", () => {
     const app = createApp();
     const { accessToken } = await registerAndLogin(app);
     const res = await request(app)
-      .post("/me/kyc")
+      .post("/user/me/kyc")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ documents: [{ documentType: "id_front", key: "kyc/some-other-user-id/file.pdf" }] });
     expect(res.status).toBe(403);
@@ -111,7 +111,7 @@ describe("KYC document upload", () => {
     const app = createApp();
     const { accessToken, user } = await registerAndLogin(app);
     const res = await request(app)
-      .post("/me/kyc")
+      .post("/user/me/kyc")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({
         documents: [

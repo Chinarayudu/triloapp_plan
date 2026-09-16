@@ -27,21 +27,26 @@ const verifySchema = z.object({
   deviceFingerprint: z.string().min(1).max(200).optional(),
 });
 const refreshSchema = z.object({ refreshToken: z.string().min(1) });
-const adminLoginSchema = z.object({ email: z.string().email(), password: z.string().min(1) });
 
 // A factory, not a module-level router: express-rate-limit's store is
 // created fresh per call, so each createApp() gets its own isolated
 // rate-limit counter instead of sharing one across every app instance
 // a process creates (which is exactly what test isolation needs).
-export function createAuthRouter(): Router {
-  const authRouter = Router();
+//
+// Mounted under both /user/auth and /host/auth (app.ts) — call this once per
+// createApp() and mount the single returned instance at both paths, not once
+// per mount point, so the OTP-request rate-limit budget is shared across
+// both app surfaces rather than doubled (API-design follow-up: User and Host
+// now hit different URLs for the same login/signup flow, purely so a
+// request/error in the logs is attributable to which app made it — the
+// underlying OTP logic is identical and unduplicated). Not mounted for
+// admin — admin/sub-admin has no OTP signup path at all, only
+// createAdminAuthRouter's email+password login below.
+export function createOtpAuthRouter(): Router {
+  const router = Router();
   const otpRequestLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5 });
-  // Separate budget from OTP requests, and generous-but-bounded against
-  // password-guessing (BACKEND_PLAN.md §8 "Rate limiting") — keyed by IP
-  // since there's no authenticated identity yet at this point.
-  const adminLoginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
 
-  authRouter.post("/otp/request", otpRequestLimiter, validateBody(phoneSchema), async (req, res, next) => {
+  router.post("/otp/request", otpRequestLimiter, validateBody(phoneSchema), async (req, res, next) => {
     try {
       const { phone } = req.body as z.infer<typeof phoneSchema>;
       const result = await requestOtp(phone);
@@ -51,7 +56,7 @@ export function createAuthRouter(): Router {
     }
   });
 
-  authRouter.post("/otp/verify", validateBody(verifySchema), async (req, res, next) => {
+  router.post("/otp/verify", validateBody(verifySchema), async (req, res, next) => {
     try {
       const { phone, code, role, deviceFingerprint } = req.body as z.infer<typeof verifySchema>;
       await verifyOtp(phone, code);
@@ -87,12 +92,60 @@ export function createAuthRouter(): Router {
     }
   });
 
-  // Admin/sub-admin only (Phase 9 follow-up, matching the admin web app's
-  // design) — Users/Hosts never hit this, they only ever use OTP above.
-  // Deliberately does not distinguish "no such email" from "wrong
-  // password" in its error (same generic message either way) so this
-  // can't be used to enumerate which admin emails exist.
-  authRouter.post("/admin/login", adminLoginLimiter, validateBody(adminLoginSchema), async (req, res, next) => {
+  return router;
+}
+
+// Token refresh/logout genuinely don't vary by role at all (same rotate/
+// revoke-by-caller-id logic for a user, host, admin, or sub-admin token
+// alike) — kept as their own router, separate from the OTP signup/login
+// router above, and mounted at all three prefixes (/user/auth, /host/auth,
+// /admin/auth) in app.ts so every role keeps a working session lifecycle
+// post-split, without also exposing OTP signup under the admin prefix.
+export function createSessionRouter(): Router {
+  const router = Router();
+
+  router.post("/token/refresh", validateBody(refreshSchema), async (req, res, next) => {
+    try {
+      const { refreshToken } = req.body as z.infer<typeof refreshSchema>;
+      const tokens = await rotateRefreshToken(refreshToken);
+      res.json(tokens);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/logout", requireAuth, validateBody(refreshSchema), async (req, res, next) => {
+    try {
+      const { refreshToken } = req.body as z.infer<typeof refreshSchema>;
+      await revokeRefreshToken(refreshToken, req.user!.sub);
+      res.json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  return router;
+}
+
+const adminLoginSchema = z.object({ email: z.string().email(), password: z.string().min(1) });
+
+// Separate from the OTP router above (not just a different path on the same
+// one): admin/sub-admin login is email+password, not phone/OTP — the admin
+// web app's own login screen. Mounted at /admin/auth (app.ts) alongside
+// createSessionRouter's token/refresh + logout, so admin's whole auth
+// surface lives under one consistent /admin/auth/* prefix, the same pattern
+// /user/auth/* and /host/auth/* follow.
+export function createAdminAuthRouter(): Router {
+  const router = Router();
+  // Separate budget from OTP requests, and generous-but-bounded against
+  // password-guessing (BACKEND_PLAN.md §8 "Rate limiting") — keyed by IP
+  // since there's no authenticated identity yet at this point.
+  const adminLoginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
+
+  // Deliberately does not distinguish "no such email" from "wrong password"
+  // in its error (same generic message either way) so this can't be used to
+  // enumerate which admin emails exist.
+  router.post("/login", adminLoginLimiter, validateBody(adminLoginSchema), async (req, res, next) => {
     try {
       const { email, password } = req.body as z.infer<typeof adminLoginSchema>;
       const user = await findUserByEmail(email);
@@ -118,25 +171,5 @@ export function createAuthRouter(): Router {
     }
   });
 
-  authRouter.post("/token/refresh", validateBody(refreshSchema), async (req, res, next) => {
-    try {
-      const { refreshToken } = req.body as z.infer<typeof refreshSchema>;
-      const tokens = await rotateRefreshToken(refreshToken);
-      res.json(tokens);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  authRouter.post("/logout", requireAuth, validateBody(refreshSchema), async (req, res, next) => {
-    try {
-      const { refreshToken } = req.body as z.infer<typeof refreshSchema>;
-      await revokeRefreshToken(refreshToken, req.user!.sub);
-      res.json({ success: true });
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  return authRouter;
+  return router;
 }

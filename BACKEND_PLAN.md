@@ -8,6 +8,8 @@ Three client apps (built by others), one backend to serve all three:
 | Host App ("girls") | `HOST` | go online/offline, receive/accept calls, chat, live broadcast, earnings (beans), withdraw, send gift-request popups |
 | Admin App | `ADMIN` / `SUB_ADMIN` | KYC, pricing/commission config, withdrawal approval, moderation, 18+ toggle, analytics |
 
+**A note on the paths below**: every non-admin endpoint mentioned in this document (`/me`, `/calls`, `/wallet`, `/hosts`, `/gifts`, `/chat`, `/live`, `/withdrawals`, `/moderation`, `/grievances`, `/vip`, `/auth/otp/...`, `/auth/token/refresh`, `/auth/logout`, etc.) is namespaced by app — the real path is `/user/...` or `/host/...` (API-design follow-up: the same route logic is mounted at both prefixes, so a User-app and Host-app request to what's conceptually "the same" endpoint are still distinguishable in logs). `/admin/...` paths are shown with their real prefix already, and admin's own login is `POST /admin/auth/login` (not `/auth/admin/login`). This doc uses the bare/shorthand form throughout for readability — see `postman/TriloPlan-Host.postman_collection.json` / `-User.../ -Admin...` or `src/app.ts` for the exact, real paths.
+
 ---
 
 ## 1. Money Model — get this right first
@@ -138,6 +140,7 @@ I'll assume **India-first (Razorpay/Cashfree high-risk tier)** unless you tell m
 ### Presence
 - Redis-backed online/available/busy/offline state per host, pushed to user app via WebSocket/pub-sub so the host list updates live without polling.
 - Host list API: filter by available, sort by rating/price/recently-online, paginate.
+- **Auto-offline on disconnect — built (bug fix)**: `presence.store.ts`'s online flag used to be set/cleared *only* by the explicit `PATCH /me/presence` toggle — nothing corrected it when a host's connection just dropped (closed tab, backgrounded app, network loss) without them toggling offline first. A user calling that host would pass `initiateCall`'s `isOnline()` gate, get a `ringing` call created, and then nothing — `emitToUser` silently reaches no one with no live socket, and the push fallback (`lib/push.ts`) is a dev-mode log line, not a real notification, so the call rang out with no visible failure on either side. Fixed in `realtime/socket.ts`: on a socket's `disconnect`, if no other connection remains for that account, it's auto-marked offline and `presence:update` broadcasts the change — same as the explicit toggle. `initiateCall` now fails fast and honestly ("Host is not online") instead of ringing into the void.
 
 ### Chat (1:1) — built (Phase 5): self-built, not a third-party service
 - Persisted message history in Postgres (`chat_conversations` + `chat_messages`), delivered live over Socket.io via the same per-user-room mechanism calls/presence already use, push notification when recipient has no live connection.
@@ -272,6 +275,14 @@ Everything else below is a straightforward missing-endpoint/missing-field gap, n
 - **Username + user languages** — `users.username` (unique, nullable) and `users.languages` (for "creator recommendations" per the design — no recommendation engine consumes it yet, same "field before the feature" precedent as `hostProfiles.privateLiveRatePerMinutePaise`). `PATCH /me` gained both, with a 409 on a taken username.
 - **Notification preferences: three more fields** — `liveAlerts`/`callSummaries`/`walletActivityAlerts` added to the same `notification_preferences` table/endpoints the Host app pass built (already role-agnostic, no new routes needed).
 - Postman: `TriloPlan-User.postman_collection.json` updated for every endpoint above.
+
+### API namespaced per app — built
+
+The User and Host apps previously called the exact same bare paths (`/calls`, `/me`, `/gifts/send`, ...) for everything except admin's already-separate `/admin/*` — one Express router mounted once, with `requireRole`/ownership checks inside each route doing the actual access control. That made an API issue in the logs unattributable to a specific app by URL alone; the caller's JWT role had to be checked too.
+
+- **Fix**: every User/Host-facing router (`src/app.ts`) is now mounted twice — once under `/user`, once under `/host` — from the *same* router instance both times, so the OTP rate limiter and every other piece of in-memory state stays shared rather than doubled. The routes' internal `requireRole`/ownership checks are completely unchanged; a request to the "wrong" prefix (e.g. `/user/calls/:id/accept`, host-only) just 403s the same way it always did — nothing about who-can-call-what changed, only the URL used to reach it.
+- **Auth split three ways**: `src/modules/auth/auth.routes.ts`'s single `createAuthRouter()` became three factories — `createOtpAuthRouter()` (otp/request, otp/verify — mounted at `/user/auth` and `/host/auth`, one shared instance), `createSessionRouter()` (token/refresh, logout — role-agnostic, mounted at all three of `/user/auth`, `/host/auth`, `/admin/auth`), and `createAdminAuthRouter()` (just the email+password login, moved from `/auth/admin/login` to `/admin/auth/login` for consistency with the other two apps' `/<app>/auth/*` shape).
+- Every test in the vitest suite, all three Postman collections (Host/User/Admin), and both frontend repos' API clients were updated to the new paths — see each collection's requests and `dating_host_app/src/api/client.js` / `user_app_dating/src/lib/api.js` (both now prepend their app's fixed prefix in one place, at the base `fetch` call, rather than per-endpoint).
 
 ---
 

@@ -10,33 +10,33 @@ describe("Host follows (BR-NOTIF-01 'a followed host going live')", () => {
     const host = await registerAndLogin(app, "host");
 
     const followed = await request(app)
-      .post(`/hosts/${host.user.id}/follow`)
+      .post(`/user/hosts/${host.user.id}/follow`)
       .set("Authorization", `Bearer ${user.accessToken}`);
     expect(followed.status).toBe(200);
 
     // Following twice is a no-op, not a duplicate/error.
     const followedAgain = await request(app)
-      .post(`/hosts/${host.user.id}/follow`)
+      .post(`/user/hosts/${host.user.id}/follow`)
       .set("Authorization", `Bearer ${user.accessToken}`);
     expect(followedAgain.status).toBe(200);
 
-    const list = await request(app).get("/me/following").set("Authorization", `Bearer ${user.accessToken}`);
+    const list = await request(app).get("/user/me/following").set("Authorization", `Bearer ${user.accessToken}`);
     expect(list.status).toBe(200);
     expect(list.body.hosts).toHaveLength(1);
     expect(list.body.hosts[0].hostId).toBe(host.user.id);
 
     const unfollowed = await request(app)
-      .post(`/hosts/${host.user.id}/unfollow`)
+      .post(`/user/hosts/${host.user.id}/unfollow`)
       .set("Authorization", `Bearer ${user.accessToken}`);
     expect(unfollowed.status).toBe(200);
 
     // Unfollowing something never followed is also a no-op, not an error.
     const unfollowedAgain = await request(app)
-      .post(`/hosts/${host.user.id}/unfollow`)
+      .post(`/user/hosts/${host.user.id}/unfollow`)
       .set("Authorization", `Bearer ${user.accessToken}`);
     expect(unfollowedAgain.status).toBe(200);
 
-    const listAfter = await request(app).get("/me/following").set("Authorization", `Bearer ${user.accessToken}`);
+    const listAfter = await request(app).get("/user/me/following").set("Authorization", `Bearer ${user.accessToken}`);
     expect(listAfter.body.hosts).toHaveLength(0);
   });
 
@@ -47,12 +47,12 @@ describe("Host follows (BR-NOTIF-01 'a followed host going live')", () => {
     const host = await registerAndLogin(app, "host");
 
     const followUser = await request(app)
-      .post(`/hosts/${otherUser.user.id}/follow`)
+      .post(`/user/hosts/${otherUser.user.id}/follow`)
       .set("Authorization", `Bearer ${user.accessToken}`);
     expect(followUser.status).toBe(404);
 
     const hostTriesToFollow = await request(app)
-      .post(`/hosts/${otherUser.user.id}/follow`)
+      .post(`/host/hosts/${otherUser.user.id}/follow`)
       .set("Authorization", `Bearer ${host.accessToken}`);
     expect(hostTriesToFollow.status).toBe(403); // requireRole("user")
   });
@@ -61,15 +61,15 @@ describe("Host follows (BR-NOTIF-01 'a followed host going live')", () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
     const follower = await registerAndLogin(app, "user");
-    await request(app).post(`/hosts/${host.user.id}/follow`).set("Authorization", `Bearer ${follower.accessToken}`);
+    await request(app).post(`/user/hosts/${host.user.id}/follow`).set("Authorization", `Bearer ${follower.accessToken}`);
 
-    const started = await request(app).post("/live/broadcasts").set("Authorization", `Bearer ${host.accessToken}`);
+    const started = await request(app).post("/host/live/broadcasts").set("Authorization", `Bearer ${host.accessToken}`);
     expect(started.status).toBe(201); // notifyFollowersHostWentLive ran and didn't blow up the request
 
     // A second host with zero followers going live is the common case and
     // must not error either (listFollowerIds returning [] short-circuits).
     const lonelyHost = await registerAndLogin(app, "host");
-    const lonelyStart = await request(app).post("/live/broadcasts").set("Authorization", `Bearer ${lonelyHost.accessToken}`);
+    const lonelyStart = await request(app).post("/host/live/broadcasts").set("Authorization", `Bearer ${lonelyHost.accessToken}`);
     expect(lonelyStart.status).toBe(201);
   });
 });

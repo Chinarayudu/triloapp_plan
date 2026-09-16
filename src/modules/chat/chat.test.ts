@@ -10,7 +10,7 @@ describe("Chat: sending and reading messages", () => {
     const host = await registerAndLogin(app, "host");
 
     const first = await request(app)
-      .post("/chat/messages")
+      .post("/user/chat/messages")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ recipientId: host.user.id, content: "Hi there!" });
     expect(first.status).toBe(201);
@@ -18,14 +18,14 @@ describe("Chat: sending and reading messages", () => {
     const conversationId = first.body.conversationId;
 
     const reply = await request(app)
-      .post("/chat/messages")
+      .post("/host/chat/messages")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ recipientId: user.user.id, content: "Hello!" });
     expect(reply.status).toBe(201);
     expect(reply.body.conversationId).toBe(conversationId); // same conversation, not a new one
 
     const history = await request(app)
-      .get(`/chat/conversations/${conversationId}/messages`)
+      .get(`/user/chat/conversations/${conversationId}/messages`)
       .set("Authorization", `Bearer ${user.accessToken}`);
     expect(history.status).toBe(200);
     expect(history.body.messages).toHaveLength(2);
@@ -40,17 +40,17 @@ describe("Chat: sending and reading messages", () => {
     const host = await registerAndLogin(app, "host");
 
     await request(app)
-      .post("/chat/messages")
+      .post("/user/chat/messages")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ recipientId: host.user.id, content: "Are you free?" });
 
-    const userView = await request(app).get("/chat/conversations").set("Authorization", `Bearer ${user.accessToken}`);
+    const userView = await request(app).get("/user/chat/conversations").set("Authorization", `Bearer ${user.accessToken}`);
     expect(userView.status).toBe(200);
     const userConvo = userView.body.conversations.find((c: { otherParticipant: { id: string } }) => c.otherParticipant.id === host.user.id);
     expect(userConvo).toBeTruthy();
     expect(userConvo.otherParticipant.role).toBe("host");
 
-    const hostView = await request(app).get("/chat/conversations").set("Authorization", `Bearer ${host.accessToken}`);
+    const hostView = await request(app).get("/host/chat/conversations").set("Authorization", `Bearer ${host.accessToken}`);
     const hostConvo = hostView.body.conversations.find((c: { otherParticipant: { id: string } }) => c.otherParticipant.id === user.user.id);
     expect(hostConvo).toBeTruthy();
     expect(hostConvo.otherParticipant.role).toBe("user");
@@ -62,7 +62,7 @@ describe("Chat: sending and reading messages", () => {
     const user2 = await registerAndLogin(app, "user");
 
     const res = await request(app)
-      .post("/chat/messages")
+      .post("/user/chat/messages")
       .set("Authorization", `Bearer ${user1.accessToken}`)
       .send({ recipientId: user2.user.id, content: "hi" });
     expect(res.status).toBe(400);
@@ -75,12 +75,12 @@ describe("Chat: sending and reading messages", () => {
     const outsider = await registerAndLogin(app, "user");
 
     const sendRes = await request(app)
-      .post("/chat/messages")
+      .post("/user/chat/messages")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ recipientId: host.user.id, content: "private" });
 
     const res = await request(app)
-      .get(`/chat/conversations/${sendRes.body.conversationId}/messages`)
+      .get(`/user/chat/conversations/${sendRes.body.conversationId}/messages`)
       .set("Authorization", `Bearer ${outsider.accessToken}`);
     expect(res.status).toBe(403);
   });
@@ -91,7 +91,7 @@ describe("Chat: sending and reading messages", () => {
     const host = await registerAndLogin(app, "host");
 
     const res = await request(app)
-      .post("/chat/messages")
+      .post("/user/chat/messages")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ recipientId: host.user.id, content: "" });
     expect(res.status).toBe(400);

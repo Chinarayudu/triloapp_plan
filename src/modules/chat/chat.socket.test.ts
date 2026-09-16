@@ -37,7 +37,7 @@ describe("Chat: live delivery and offline push", () => {
     const received = new Promise<{ content: string }>((resolve) => recipientSocket!.on("chat:message", resolve));
 
     await request(app)
-      .post("/chat/messages")
+      .post("/user/chat/messages")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ recipientId: host.user.id, content: "live delivery test" });
 
@@ -54,7 +54,7 @@ describe("Chat: live delivery and offline push", () => {
     // attached to a socket server, so isUserConnected() will report false.
 
     await request(app)
-      .post("/chat/messages")
+      .post("/user/chat/messages")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ recipientId: host.user.id, content: "are you there?" });
 

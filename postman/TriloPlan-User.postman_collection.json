@@ -5,32 +5,127 @@
     "description": "Backend API surface for the User app — screen-verified against the User app's Figma (~90 screens, User app design follow-up). See CLAUDE.md, BACKEND_PLAN.md and BRD.md in the repo for full backend context.\n\nCompanion collections: `TriloPlan-Host.postman_collection.json` and `TriloPlan-Admin.postman_collection.json`.\n\n## Four Figma/BRD conflicts resolved before building this pass\nSee `BACKEND_PLAN.md`'s \"User app design follow-up\" section for full detail. In short: the wallet/recharge/call-spend \"beans\" you'll see in responses (`displayBeans`) are a **display-only label** — paise is still the real internal currency; VIP Subscriptions were built despite BRD's prior \"out of scope\" call; \"Level Up\" loyalty tiers were **not** built (not in the BRD, no economics specified); Users verify age via self-declared DOB (`POST /me/verify-age`), Hosts still go through KYC review.\n\n## OTP login while there's no real SMS yet\nThe backend has a dev-only bypass (`OTP_BYPASS_VERIFICATION=true` in the server's `.env`, off in production): `POST /auth/otp/verify` accepts ANY phone + ANY 6-digit code, no prior `/otp/request` call required. This collection still calls `/otp/request` first and saves `devCode` (harmless either way).\n\n## Recommended run order (Collection Runner-safe, top to bottom)\nAuth — User Login → Profile (Me) → Setup — Counterpart Host → Hosts — Discovery & Follow → Wallet → Wallet Recharge → VIP Subscription → Calls → Chat → Gifts → Live Broadcasting → Moderation → Grievance → Auth — Session → Delete Account (last — scrubs the account, so re-running the collection from the top afterward just creates a fresh one on the same `userPhone`).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
-  "auth": { "type": "noauth" },
+  "auth": {
+    "type": "noauth"
+  },
   "event": [],
   "variable": [
-    { "key": "baseUrl", "value": "http://localhost:4000", "type": "string" },
-    { "key": "userPhone", "value": "+919876520001", "type": "string" },
-    { "key": "userDevCode", "value": "", "type": "string" },
-    { "key": "userAccessToken", "value": "", "type": "string" },
-    { "key": "userRefreshToken", "value": "", "type": "string" },
-    { "key": "userId", "value": "", "type": "string" },
-    { "key": "hostPhone", "value": "+919876520555", "type": "string", "description": "Counterpart HOST identity (Setup folder), so the user has someone real to browse/call/gift." },
-    { "key": "hostDevCode", "value": "", "type": "string" },
-    { "key": "hostAccessToken", "value": "", "type": "string" },
-    { "key": "hostId", "value": "", "type": "string" },
-    { "key": "callId", "value": "", "type": "string" },
-    { "key": "kycUploadUrl", "value": "", "type": "string" },
-    { "key": "kycDocumentKey", "value": "", "type": "string" },
-    { "key": "chatConversationId", "value": "", "type": "string" },
-    { "key": "giftId", "value": "", "type": "string" },
-    { "key": "liveBroadcastId", "value": "", "type": "string" },
-    { "key": "reportId", "value": "", "type": "string" },
-    { "key": "rechargePackageId", "value": "", "type": "string" },
-    { "key": "rechargeTxnId", "value": "", "type": "string" },
-    { "key": "vipPlanId", "value": "", "type": "string" },
-    { "key": "vipSubscriptionId", "value": "", "type": "string" },
-    { "key": "grievanceUploadUrl", "value": "", "type": "string" },
-    { "key": "grievanceEvidenceKey", "value": "", "type": "string" }
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000",
+      "type": "string"
+    },
+    {
+      "key": "userPhone",
+      "value": "+919876520001",
+      "type": "string"
+    },
+    {
+      "key": "userDevCode",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userAccessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userRefreshToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "hostPhone",
+      "value": "+919876520555",
+      "type": "string",
+      "description": "Counterpart HOST identity (Setup folder), so the user has someone real to browse/call/gift."
+    },
+    {
+      "key": "hostDevCode",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "hostAccessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "hostId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "callId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "kycUploadUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "kycDocumentKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "chatConversationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "giftId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "liveBroadcastId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "reportId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "rechargePackageId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "rechargeTxnId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "vipPlanId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "vipSubscriptionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "grievanceUploadUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "grievanceEvidenceKey",
+      "value": "",
+      "type": "string"
+    }
   ],
   "item": [
     {
@@ -40,9 +135,29 @@
           "name": "1. Request OTP — User Phone",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
-            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{userPhone}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{userPhone}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/auth/otp/request",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "auth",
+                "otp",
+                "request"
+              ]
+            },
             "description": "Matches the app's \"Your number / Send code\" screen (step 1 of 4)."
           },
           "event": [
@@ -63,9 +178,29 @@
           "name": "2. Verify OTP — User App",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
-            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{userPhone}}\",\n  \"code\": \"{{userDevCode}}\",\n  \"role\": \"user\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{userPhone}}\",\n  \"code\": \"{{userDevCode}}\",\n  \"role\": \"user\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/auth/otp/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "auth",
+                "otp",
+                "verify"
+              ]
+            },
             "description": "Matches \"Verify / Step 2 of 4\". Any 6-digit code works while OTP_BYPASS_VERIFICATION is on."
           },
           "event": [
@@ -95,8 +230,23 @@
           "name": "Get My Profile",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me"
+              ]
+            },
             "description": "Profile screen — now includes username, languages, and isVipActive alongside the existing fields."
           }
         },
@@ -105,11 +255,31 @@
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Arjun Sharma\",\n  \"username\": \"arjun\",\n  \"email\": \"arjun.m@email.com\",\n  \"dob\": \"1996-03-12\",\n  \"languages\": [\"Hindi\", \"English\"]\n}" },
-            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Arjun Sharma\",\n  \"username\": \"arjun\",\n  \"email\": \"arjun.m@email.com\",\n  \"dob\": \"1996-03-12\",\n  \"languages\": [\"Hindi\", \"English\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me"
+              ]
+            },
             "description": "Edit Profile screen's fields. DOB is required before Verify Age below can succeed."
           }
         },
@@ -117,8 +287,24 @@
           "name": "Verify Age (Step 4 of 4 — \"Access confirmed\")",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/me/verify-age", "host": ["{{baseUrl}}"], "path": ["me", "verify-age"] },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/me/verify-age",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "verify-age"
+              ]
+            },
             "description": "Self-declared DOB verification (User app design follow-up — a deliberate deviation from BR-ACC-04's KYC-reviewed bar, see BRD.md's amendment note). Instant: 200 { ageVerified: true } if 18+ from the DOB set above, { ageVerified: false } otherwise (never suspends the account)."
           }
         },
@@ -127,11 +313,33 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"contentType\": \"application/pdf\"\n}" },
-            "url": { "raw": "{{baseUrl}}/me/kyc/upload-url", "host": ["{{baseUrl}}"], "path": ["me", "kyc", "upload-url"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contentType\": \"application/pdf\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/me/kyc/upload-url",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "kyc",
+                "upload-url"
+              ]
+            },
             "description": "KYC (identity documents, distinct from the age self-declaration above) — not shown as a User-app screen but the endpoint still exists for any future use."
           },
           "event": [
@@ -151,11 +359,27 @@
         {
           "name": "2. Upload Document to S3",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/pdf", "type": "text" }],
-            "body": { "mode": "raw", "raw": "This is placeholder file content for testing the upload flow." },
-            "url": { "raw": "{{kycUploadUrl}}", "host": ["{{kycUploadUrl}}"] }
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/pdf",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "This is placeholder file content for testing the upload flow."
+            },
+            "url": {
+              "raw": "{{kycUploadUrl}}",
+              "host": [
+                "{{kycUploadUrl}}"
+              ]
+            }
           }
         },
         {
@@ -163,27 +387,80 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"documents\": [\n    { \"documentType\": \"id_front\", \"key\": \"{{kycDocumentKey}}\" }\n  ]\n}" },
-            "url": { "raw": "{{baseUrl}}/me/kyc", "host": ["{{baseUrl}}"], "path": ["me", "kyc"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documents\": [\n    { \"documentType\": \"id_front\", \"key\": \"{{kycDocumentKey}}\" }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/me/kyc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "kyc"
+              ]
+            }
           }
         },
         {
           "name": "4. Get My KYC Status",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/me/kyc", "host": ["{{baseUrl}}"], "path": ["me", "kyc"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/me/kyc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "kyc"
+              ]
+            }
           }
         },
         {
           "name": "Get Notification Preferences",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/me/notification-preferences", "host": ["{{baseUrl}}"], "path": ["me", "notification-preferences"] },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/me/notification-preferences",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "notification-preferences"
+              ]
+            },
             "description": "Notifications settings screen — Live alerts / Messages / Call summaries / Wallet activity / Offers."
           }
         },
@@ -192,11 +469,32 @@
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"callSummaries\": true,\n  \"promotionsAndTips\": false\n}" },
-            "url": { "raw": "{{baseUrl}}/me/notification-preferences", "host": ["{{baseUrl}}"], "path": ["me", "notification-preferences"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"callSummaries\": true,\n  \"promotionsAndTips\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/me/notification-preferences",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "notification-preferences"
+              ]
+            }
           }
         }
       ]
@@ -209,16 +507,39 @@
           "name": "1. Request OTP — Counterpart Host",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
-            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{hostPhone}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] }
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{hostPhone}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/auth/otp/request",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "auth",
+                "otp",
+                "request"
+              ]
+            }
           },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["var jsonData = pm.response.json();", "if (jsonData.devCode) { pm.collectionVariables.set(\"hostDevCode\", jsonData.devCode); }"]
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.devCode) { pm.collectionVariables.set(\"hostDevCode\", jsonData.devCode); }"
+                ]
               }
             }
           ]
@@ -227,9 +548,29 @@
           "name": "2. Verify OTP — Counterpart Host",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
-            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{hostPhone}}\",\n  \"code\": \"{{hostDevCode}}\",\n  \"role\": \"host\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] }
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{hostPhone}}\",\n  \"code\": \"{{hostDevCode}}\",\n  \"role\": \"host\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/auth/otp/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "auth",
+                "otp",
+                "verify"
+              ]
+            }
           },
           "event": [
             {
@@ -252,14 +593,32 @@
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"ratePerMinutePaise\": 2400,\n  \"bio\": \"Classical-meets-contemporary dancer.\",\n  \"languages\": [\"Hindi\", \"English\"],\n  \"talksAboutTags\": [\"Dance\", \"Bollywood music\", \"Mumbai food\"],\n  \"hobbies\": [\"Classical dance practice\", \"Cooking on weekends\"],\n  \"sports\": [\"Badminton\", \"Cycling\"]\n}"
             },
-            "url": { "raw": "{{baseUrl}}/me/host-profile", "host": ["{{baseUrl}}"], "path": ["me", "host-profile"] },
+            "url": {
+              "raw": "{{baseUrl}}/user/me/host-profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "host-profile"
+              ]
+            },
             "description": "Fills in the Creator Profile screen's structured sections (Talks About / Hobbies / Sports) so Get Host Detail below has something to show."
           }
         },
@@ -268,11 +627,32 @@
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{hostAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"isOnline\": true\n}" },
-            "url": { "raw": "{{baseUrl}}/me/presence", "host": ["{{baseUrl}}"], "path": ["me", "presence"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isOnline\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/me/presence",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "presence"
+              ]
+            }
           }
         }
       ]
@@ -284,16 +664,39 @@
           "name": "List Hosts",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
             "url": {
-              "raw": "{{baseUrl}}/hosts?onlineOnly=true&sort=rating_desc&page=1&pageSize=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["hosts"],
+              "raw": "{{baseUrl}}/user/hosts?onlineOnly=true&sort=rating_desc&page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "hosts"
+              ],
               "query": [
-                { "key": "onlineOnly", "value": "true" },
-                { "key": "sort", "value": "rating_desc" },
-                { "key": "page", "value": "1" },
-                { "key": "pageSize", "value": "20" }
+                {
+                  "key": "onlineOnly",
+                  "value": "true"
+                },
+                {
+                  "key": "sort",
+                  "value": "rating_desc"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
               ]
             },
             "description": "Home screen's All/New/Popular/Nearby/Following tabs all resolve to this with different sort/filter — sort also accepts rate_asc|rate_desc|online_first. Each host now includes rating, galleryCount (the photo-count badge on the card)."
@@ -303,12 +706,28 @@
           "name": "Search Hosts",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
             "url": {
-              "raw": "{{baseUrl}}/hosts?q=Hindi",
-              "host": ["{{baseUrl}}"],
-              "path": ["hosts"],
-              "query": [{ "key": "q", "value": "Hindi" }]
+              "raw": "{{baseUrl}}/user/hosts?q=Hindi",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "hosts"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "Hindi"
+                }
+              ]
             },
             "description": "Search screen — q matches creator name or any spoken language (partial, case-insensitive)."
           }
@@ -317,8 +736,24 @@
           "name": "Get Host Detail",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/hosts/{{hostId}}", "host": ["{{baseUrl}}"], "path": ["hosts", "{{hostId}}"] },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/hosts/{{hostId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "hosts",
+                "{{hostId}}"
+              ]
+            },
             "description": "Creator Profile screen (previously had no backing endpoint — only the list view existed) — bio, talksAboutTags/hobbies/sports/languages, gallery, rating, followerCount, isFollowing, online status, derived age."
           }
         },
@@ -326,24 +761,74 @@
           "name": "Follow Host",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/hosts/{{hostId}}/follow", "host": ["{{baseUrl}}"], "path": ["hosts", "{{hostId}}", "follow"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/hosts/{{hostId}}/follow",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "hosts",
+                "{{hostId}}",
+                "follow"
+              ]
+            }
           }
         },
         {
           "name": "List My Followed Hosts",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/me/following", "host": ["{{baseUrl}}"], "path": ["me", "following"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/me/following",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "following"
+              ]
+            }
           }
         },
         {
           "name": "Unfollow Host",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/hosts/{{hostId}}/unfollow", "host": ["{{baseUrl}}"], "path": ["hosts", "{{hostId}}", "unfollow"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/hosts/{{hostId}}/unfollow",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "hosts",
+                "{{hostId}}",
+                "unfollow"
+              ]
+            }
           }
         }
       ]
@@ -355,8 +840,23 @@
           "name": "Get My Wallet",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/wallet", "host": ["{{baseUrl}}"], "path": ["wallet"] },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/wallet",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "wallet"
+              ]
+            },
             "description": "Now includes displayBeans alongside balancePaise — a fixed, cosmetic-only conversion (see the collection description's \"beans\" note)."
           }
         },
@@ -365,11 +865,32 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"amountPaise\": 500000\n}" },
-            "url": { "raw": "{{baseUrl}}/wallet/dev-credit", "host": ["{{baseUrl}}"], "path": ["wallet", "dev-credit"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountPaise\": 500000\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/wallet/dev-credit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "wallet",
+                "dev-credit"
+              ]
+            },
             "description": "A quick arbitrary-amount top-up for exercising other features (calls, gifts) — kept alongside the more realistic Wallet Recharge flow below, which matches the actual Talktime/Add-balance screens."
           }
         }
@@ -383,8 +904,24 @@
           "name": "1. List Recharge Packages",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/wallet/recharge-packages", "host": ["{{baseUrl}}"], "path": ["wallet", "recharge-packages"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/wallet/recharge-packages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "wallet",
+                "recharge-packages"
+              ]
+            }
           },
           "event": [
             {
@@ -405,11 +942,33 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"packageId\": \"{{rechargePackageId}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/wallet/recharge/initiate", "host": ["{{baseUrl}}"], "path": ["wallet", "recharge", "initiate"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"packageId\": \"{{rechargePackageId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/wallet/recharge/initiate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "wallet",
+                "recharge",
+                "initiate"
+              ]
+            }
           },
           "event": [
             {
@@ -429,8 +988,25 @@
           "name": "3. Get Recharge Status",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/wallet/recharge/{{rechargeTxnId}}", "host": ["{{baseUrl}}"], "path": ["wallet", "recharge", "{{rechargeTxnId}}"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/wallet/recharge/{{rechargeTxnId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "wallet",
+                "recharge",
+                "{{rechargeTxnId}}"
+              ]
+            }
           }
         },
         {
@@ -438,14 +1014,33 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"success\"\n}" },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"outcome\": \"success\"\n}"
+            },
             "url": {
-              "raw": "{{baseUrl}}/wallet/recharge/{{rechargeTxnId}}/dev-resolve",
-              "host": ["{{baseUrl}}"],
-              "path": ["wallet", "recharge", "{{rechargeTxnId}}", "dev-resolve"]
+              "raw": "{{baseUrl}}/user/wallet/recharge/{{rechargeTxnId}}/dev-resolve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "wallet",
+                "recharge",
+                "{{rechargeTxnId}}",
+                "dev-resolve"
+              ]
             },
             "description": "Stands in for the payment gateway's webhook — non-prod only. outcome can also be \"failed\" (\"Payment failed\" screen)."
           }
@@ -460,8 +1055,24 @@
           "name": "1. List VIP Plans",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/vip/plans", "host": ["{{baseUrl}}"], "path": ["vip", "plans"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/vip/plans",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "vip",
+                "plans"
+              ]
+            }
           },
           "event": [
             {
@@ -482,11 +1093,32 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"planId\": \"{{vipPlanId}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/vip/subscribe", "host": ["{{baseUrl}}"], "path": ["vip", "subscribe"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"planId\": \"{{vipPlanId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/vip/subscribe",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "vip",
+                "subscribe"
+              ]
+            },
             "description": "Dev-stubbed payment (no real gateway yet) — activates immediately. Resubscribing while already active extends from the current expiry rather than from now."
           },
           "event": [
@@ -507,19 +1139,49 @@
           "name": "3. List My Subscriptions",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/me/subscriptions", "host": ["{{baseUrl}}"], "path": ["me", "subscriptions"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/me/subscriptions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "subscriptions"
+              ]
+            }
           }
         },
         {
           "name": "4. Cancel Subscription",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
             "url": {
-              "raw": "{{baseUrl}}/me/subscriptions/{{vipSubscriptionId}}/cancel",
-              "host": ["{{baseUrl}}"],
-              "path": ["me", "subscriptions", "{{vipSubscriptionId}}", "cancel"]
+              "raw": "{{baseUrl}}/user/me/subscriptions/{{vipSubscriptionId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "subscriptions",
+                "{{vipSubscriptionId}}",
+                "cancel"
+              ]
             },
             "description": "Sets cancelAtPeriodEnd — benefits (incl. the call-rate discount) continue until expiresAt, matching the Active Subscriptions screen's copy. Run BEFORE Calls below if you want to see the un-discounted rate instead."
           }
@@ -534,11 +1196,31 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"hostId\": \"{{hostId}}\",\n  \"type\": \"video\"\n}" },
-            "url": { "raw": "{{baseUrl}}/calls", "host": ["{{baseUrl}}"], "path": ["calls"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hostId\": \"{{hostId}}\",\n  \"type\": \"video\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/calls",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "calls"
+              ]
+            },
             "description": "type is \"video\" or \"voice\" — the host needs the matching per-type rate set (Setup folder only sets the video rate). If VIP Subscription → Subscribe ran above and wasn't cancelled, the snapshotted rate reflects the VIP discount."
           },
           "event": [
@@ -559,16 +1241,49 @@
           "name": "2. Get Call",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/calls/{{callId}}", "host": ["{{baseUrl}}"], "path": ["calls", "{{callId}}"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/calls/{{callId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "calls",
+                "{{callId}}"
+              ]
+            }
           }
         },
         {
           "name": "3. End Call",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/calls/{{callId}}/end", "host": ["{{baseUrl}}"], "path": ["calls", "{{callId}}", "end"] },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/calls/{{callId}}/end",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "calls",
+                "{{callId}}",
+                "end"
+              ]
+            },
             "description": "Ends a still-ringing call as \"missed\" if the host never accepted — fine for exercising the endpoint."
           }
         },
@@ -577,11 +1292,33 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"stars\": 5\n}" },
-            "url": { "raw": "{{baseUrl}}/calls/{{callId}}/rating", "host": ["{{baseUrl}}"], "path": ["calls", "{{callId}}", "rating"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stars\": 5\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/calls/{{callId}}/rating",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "calls",
+                "{{callId}}",
+                "rating"
+              ]
+            },
             "description": "Only succeeds once the call has reached \"completed\" — will 409 if run right after End Call above left it \"missed\"."
           }
         },
@@ -589,12 +1326,33 @@
           "name": "5. List My Past Calls",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
             "url": {
-              "raw": "{{baseUrl}}/me/calls?page=1&pageSize=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["me", "calls"],
-              "query": [{ "key": "page", "value": "1" }, { "key": "pageSize", "value": "20" }]
+              "raw": "{{baseUrl}}/user/me/calls?page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "calls"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
             },
             "description": "Past Calls screen (previously had no backing endpoint — only the host side had an equivalent)."
           }
@@ -609,11 +1367,32 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"recipientId\": \"{{hostId}}\",\n  \"content\": \"Hey! Are you free for a quick call?\"\n}" },
-            "url": { "raw": "{{baseUrl}}/chat/messages", "host": ["{{baseUrl}}"], "path": ["chat", "messages"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientId\": \"{{hostId}}\",\n  \"content\": \"Hey! Are you free for a quick call?\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/chat/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "chat",
+                "messages"
+              ]
+            }
           },
           "event": [
             {
@@ -633,20 +1412,59 @@
           "name": "2. List My Conversations",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/chat/conversations", "host": ["{{baseUrl}}"], "path": ["chat", "conversations"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/chat/conversations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "chat",
+                "conversations"
+              ]
+            }
           }
         },
         {
           "name": "3. Get Conversation Messages",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
             "url": {
-              "raw": "{{baseUrl}}/chat/conversations/{{chatConversationId}}/messages?page=1&pageSize=50",
-              "host": ["{{baseUrl}}"],
-              "path": ["chat", "conversations", "{{chatConversationId}}", "messages"],
-              "query": [{ "key": "page", "value": "1" }, { "key": "pageSize", "value": "50" }]
+              "raw": "{{baseUrl}}/user/chat/conversations/{{chatConversationId}}/messages?page=1&pageSize=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "chat",
+                "conversations",
+                "{{chatConversationId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "50"
+                }
+              ]
             }
           }
         }
@@ -659,8 +1477,23 @@
           "name": "1. List Gift Catalog",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/gifts", "host": ["{{baseUrl}}"], "path": ["gifts"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/gifts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "gifts"
+              ]
+            }
           },
           "event": [
             {
@@ -681,11 +1514,32 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"recipientId\": \"{{hostId}}\",\n  \"giftId\": \"{{giftId}}\",\n  \"context\": \"chat\",\n  \"contextId\": \"{{chatConversationId}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/gifts/send", "host": ["{{baseUrl}}"], "path": ["gifts", "send"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientId\": \"{{hostId}}\",\n  \"giftId\": \"{{giftId}}\",\n  \"context\": \"chat\",\n  \"contextId\": \"{{chatConversationId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/gifts/send",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "gifts",
+                "send"
+              ]
+            }
           }
         }
       ]
@@ -697,8 +1551,24 @@
           "name": "List Live Broadcasts",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/live/broadcasts", "host": ["{{baseUrl}}"], "path": ["live", "broadcasts"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/live/broadcasts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "live",
+                "broadcasts"
+              ]
+            }
           },
           "event": [
             {
@@ -717,11 +1587,25 @@
           "name": "Join Broadcast",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
             "url": {
-              "raw": "{{baseUrl}}/live/broadcasts/{{liveBroadcastId}}/join",
-              "host": ["{{baseUrl}}"],
-              "path": ["live", "broadcasts", "{{liveBroadcastId}}", "join"]
+              "raw": "{{baseUrl}}/user/live/broadcasts/{{liveBroadcastId}}/join",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "live",
+                "broadcasts",
+                "{{liveBroadcastId}}",
+                "join"
+              ]
             }
           }
         },
@@ -730,14 +1614,33 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"content\": \"You look great tonight!\"\n}" },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"You look great tonight!\"\n}"
+            },
             "url": {
-              "raw": "{{baseUrl}}/live/broadcasts/{{liveBroadcastId}}/chat",
-              "host": ["{{baseUrl}}"],
-              "path": ["live", "broadcasts", "{{liveBroadcastId}}", "chat"]
+              "raw": "{{baseUrl}}/user/live/broadcasts/{{liveBroadcastId}}/chat",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "live",
+                "broadcasts",
+                "{{liveBroadcastId}}",
+                "chat"
+              ]
             }
           }
         },
@@ -745,11 +1648,25 @@
           "name": "Leave Broadcast",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
             "url": {
-              "raw": "{{baseUrl}}/live/broadcasts/{{liveBroadcastId}}/leave",
-              "host": ["{{baseUrl}}"],
-              "path": ["live", "broadcasts", "{{liveBroadcastId}}", "leave"]
+              "raw": "{{baseUrl}}/user/live/broadcasts/{{liveBroadcastId}}/leave",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "live",
+                "broadcasts",
+                "{{liveBroadcastId}}",
+                "leave"
+              ]
             }
           }
         }
@@ -763,27 +1680,81 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"userId\": \"{{hostId}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/moderation/blocks", "host": ["{{baseUrl}}"], "path": ["moderation", "blocks"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{hostId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/moderation/blocks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "moderation",
+                "blocks"
+              ]
+            }
           }
         },
         {
           "name": "2. List Blocked",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/moderation/blocks", "host": ["{{baseUrl}}"], "path": ["moderation", "blocks"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/moderation/blocks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "moderation",
+                "blocks"
+              ]
+            }
           }
         },
         {
           "name": "3. Unblock Host",
           "request": {
             "method": "DELETE",
-            "header": [{ "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" }],
-            "url": { "raw": "{{baseUrl}}/moderation/blocks/{{hostId}}", "host": ["{{baseUrl}}"], "path": ["moderation", "blocks", "{{hostId}}"] }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/moderation/blocks/{{hostId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "moderation",
+                "blocks",
+                "{{hostId}}"
+              ]
+            }
           }
         },
         {
@@ -791,18 +1762,42 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"targetType\": \"host\",\n  \"targetId\": \"{{hostId}}\",\n  \"reason\": \"Nudity or sexual content\"\n}" },
-            "url": { "raw": "{{baseUrl}}/moderation/reports", "host": ["{{baseUrl}}"], "path": ["moderation", "reports"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetType\": \"host\",\n  \"targetId\": \"{{hostId}}\",\n  \"reason\": \"Nudity or sexual content\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/moderation/reports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "moderation",
+                "reports"
+              ]
+            }
           },
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["var jsonData = pm.response.json();", "if (jsonData.id) { pm.collectionVariables.set(\"reportId\", jsonData.id); }"]
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) { pm.collectionVariables.set(\"reportId\", jsonData.id); }"
+                ]
               }
             }
           ]
@@ -812,11 +1807,32 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"context\": \"call\",\n  \"contextId\": \"{{callId}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/moderation/capture-event", "host": ["{{baseUrl}}"], "path": ["moderation", "capture-event"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"context\": \"call\",\n  \"contextId\": \"{{callId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/moderation/capture-event",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "moderation",
+                "capture-event"
+              ]
+            }
           }
         }
       ]
@@ -830,11 +1846,32 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"contentType\": \"image/png\"\n}" },
-            "url": { "raw": "{{baseUrl}}/grievances/upload-url", "host": ["{{baseUrl}}"], "path": ["grievances", "upload-url"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contentType\": \"image/png\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/grievances/upload-url",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "grievances",
+                "upload-url"
+              ]
+            }
           },
           "event": [
             {
@@ -853,11 +1890,27 @@
         {
           "name": "2. Upload Evidence to S3",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "image/png", "type": "text" }],
-            "body": { "mode": "raw", "raw": "This is placeholder file content for testing the upload flow." },
-            "url": { "raw": "{{grievanceUploadUrl}}", "host": ["{{grievanceUploadUrl}}"] }
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/png",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "This is placeholder file content for testing the upload flow."
+            },
+            "url": {
+              "raw": "{{grievanceUploadUrl}}",
+              "host": [
+                "{{grievanceUploadUrl}}"
+              ]
+            }
           }
         },
         {
@@ -865,14 +1918,31 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"firstName\": \"Arjun\",\n  \"lastName\": \"Mehra\",\n  \"contactNumber\": \"+919822041188\",\n  \"email\": \"arjun.m@email.com\",\n  \"natureOfComplaint\": \"nudity_pornography\",\n  \"description\": \"During a video call on 27 Aug, the host shared explicit content without consent.\",\n  \"evidenceKeys\": [\"{{grievanceEvidenceKey}}\"]\n}"
             },
-            "url": { "raw": "{{baseUrl}}/grievances", "host": ["{{baseUrl}}"], "path": ["grievances"] },
+            "url": {
+              "raw": "{{baseUrl}}/user/grievances",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "grievances"
+              ]
+            },
             "description": "natureOfComplaint also accepts content_objection|reinstatement|copyright_violation|judicial_order|government_request|privacy|impersonation|child_safety|other."
           }
         }
@@ -885,9 +1955,29 @@
           "name": "1. Refresh Access Token",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
-            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{userRefreshToken}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "token", "refresh"] }
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{userRefreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/auth/token/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "auth",
+                "token",
+                "refresh"
+              ]
+            }
           },
           "event": [
             {
@@ -911,11 +2001,32 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{userRefreshToken}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth", "logout"] }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{userRefreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "auth",
+                "logout"
+              ]
+            }
           }
         }
       ]
@@ -928,9 +2039,29 @@
           "name": "1. Re-login (tokens from Auth — Session may be stale)",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
-            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{userPhone}}\",\n  \"code\": \"000000\",\n  \"role\": \"user\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{userPhone}}\",\n  \"code\": \"000000\",\n  \"role\": \"user\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/auth/otp/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "auth",
+                "otp",
+                "verify"
+              ]
+            },
             "description": "Any 6-digit code works while OTP_BYPASS_VERIFICATION is on — re-establishes a fresh access token in case Auth — Session's Logout already revoked the old one."
           },
           "event": [
@@ -938,7 +2069,10 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["var jsonData = pm.response.json();", "if (jsonData.accessToken) { pm.collectionVariables.set(\"userAccessToken\", jsonData.accessToken); }"]
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.accessToken) { pm.collectionVariables.set(\"userAccessToken\", jsonData.accessToken); }"
+                ]
               }
             }
           ]
@@ -948,11 +2082,32 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{userAccessToken}}", "type": "text" },
-              { "key": "Content-Type", "value": "application/json", "type": "text" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"confirm\": \"DELETE\"\n}" },
-            "url": { "raw": "{{baseUrl}}/me/delete-account", "host": ["{{baseUrl}}"], "path": ["me", "delete-account"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"confirm\": \"DELETE\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/me/delete-account",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "delete-account"
+              ]
+            },
             "description": "\"Type DELETE to confirm\" screen."
           }
         }

@@ -27,11 +27,11 @@ describe("Calls: live notifications over socket", () => {
 
     const host = await registerAndLogin(app, "host");
     await request(app)
-      .patch("/me/host-profile")
+      .patch("/host/me/host-profile")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ ratePerMinutePaise: 3000 });
     await request(app)
-      .patch("/me/presence")
+      .patch("/host/me/presence")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ isOnline: true });
 
@@ -51,7 +51,7 @@ describe("Calls: live notifications over socket", () => {
     const incoming = new Promise<{ callId: string }>((resolve) => hostSocket!.on("call:incoming", resolve));
 
     const initiate = await request(app)
-      .post("/calls")
+      .post("/user/calls")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ hostId: host.user.id });
     const callId = initiate.body.callId as string;
@@ -60,13 +60,13 @@ describe("Calls: live notifications over socket", () => {
     expect(incomingEvent.callId).toBe(callId);
 
     const accepted = new Promise<{ callId: string }>((resolve) => userSocket!.on("call:accepted", resolve));
-    await request(app).post(`/calls/${callId}/accept`).set("Authorization", `Bearer ${host.accessToken}`);
+    await request(app).post(`/host/calls/${callId}/accept`).set("Authorization", `Bearer ${host.accessToken}`);
     const acceptedEvent = await accepted;
     expect(acceptedEvent.callId).toBe(callId);
 
     const userEnded = new Promise<{ status: string }>((resolve) => userSocket!.on("call:ended", resolve));
     const hostEnded = new Promise<{ status: string }>((resolve) => hostSocket!.on("call:ended", resolve));
-    await request(app).post(`/calls/${callId}/end`).set("Authorization", `Bearer ${user.accessToken}`);
+    await request(app).post(`/user/calls/${callId}/end`).set("Authorization", `Bearer ${user.accessToken}`);
 
     expect((await userEnded).status).toBe("completed");
     expect((await hostEnded).status).toBe("completed");

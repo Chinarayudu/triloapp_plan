@@ -6,9 +6,9 @@ import { fundUserWallet, randomPhone, registerAndLogin, registerAndLoginAdmin } 
 
 async function loginWithFingerprint(app: Express, deviceFingerprint: string) {
   const phone = randomPhone();
-  const requestRes = await request(app).post("/auth/otp/request").send({ phone });
+  const requestRes = await request(app).post("/user/auth/otp/request").send({ phone });
   const verifyRes = await request(app)
-    .post("/auth/otp/verify")
+    .post("/user/auth/otp/verify")
     .send({ phone, code: requestRes.body.devCode, role: "user", deviceFingerprint });
   return { phone, ...verifyRes.body } as { phone: string; user: { id: string } };
 }
@@ -32,9 +32,9 @@ describe("Fraud: multi-accounting (BACKEND_PLAN.md §8)", () => {
 
     // A 4th login from the same third account doesn't change the distinct
     // count (still 3) — no second report for the same signal.
-    const requestRes = await request(app).post("/auth/otp/request").send({ phone: third.phone });
+    const requestRes = await request(app).post("/user/auth/otp/request").send({ phone: third.phone });
     await request(app)
-      .post("/auth/otp/verify")
+      .post("/user/auth/otp/verify")
       .send({ phone: third.phone, code: requestRes.body.devCode, deviceFingerprint: fingerprint });
 
     const queueAfterRepeat = await request(app)
@@ -48,8 +48,8 @@ describe("Fraud: multi-accounting (BACKEND_PLAN.md §8)", () => {
     const app = createApp();
     for (let i = 0; i < 4; i++) {
       const phone = randomPhone();
-      const requestRes = await request(app).post("/auth/otp/request").send({ phone });
-      const res = await request(app).post("/auth/otp/verify").send({ phone, code: requestRes.body.devCode });
+      const requestRes = await request(app).post("/user/auth/otp/request").send({ phone });
+      const res = await request(app).post("/user/auth/otp/verify").send({ phone, code: requestRes.body.devCode });
       expect(res.status).toBe(200); // no deviceFingerprint sent — nothing to correlate, never errors either
     }
   });
@@ -58,17 +58,17 @@ describe("Fraud: multi-accounting (BACKEND_PLAN.md §8)", () => {
 async function setupOnlineHost(app: Express, ratePerMinutePaise: number) {
   const host = await registerAndLogin(app, "host");
   await request(app)
-    .patch("/me/host-profile")
+    .patch("/host/me/host-profile")
     .set("Authorization", `Bearer ${host.accessToken}`)
     .send({ ratePerMinutePaise });
-  await request(app).patch("/me/presence").set("Authorization", `Bearer ${host.accessToken}`).send({ isOnline: true });
+  await request(app).patch("/host/me/presence").set("Authorization", `Bearer ${host.accessToken}`).send({ isOnline: true });
   return host;
 }
 
 async function completeCall(app: Express, userToken: string, hostToken: string, hostId: string): Promise<void> {
-  const initiate = await request(app).post("/calls").set("Authorization", `Bearer ${userToken}`).send({ hostId });
-  await request(app).post(`/calls/${initiate.body.callId}/accept`).set("Authorization", `Bearer ${hostToken}`);
-  await request(app).post(`/calls/${initiate.body.callId}/end`).set("Authorization", `Bearer ${userToken}`);
+  const initiate = await request(app).post("/user/calls").set("Authorization", `Bearer ${userToken}`).send({ hostId });
+  await request(app).post(`/host/calls/${initiate.body.callId}/accept`).set("Authorization", `Bearer ${hostToken}`);
+  await request(app).post(`/user/calls/${initiate.body.callId}/end`).set("Authorization", `Bearer ${userToken}`);
 }
 
 describe("Fraud: call collusion (BACKEND_PLAN.md §8)", () => {

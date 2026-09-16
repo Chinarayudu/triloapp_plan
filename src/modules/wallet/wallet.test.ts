@@ -7,7 +7,7 @@ describe("Wallet (dev-credit escape hatch)", () => {
   it("starts a new user at zero balance", async () => {
     const app = createApp();
     const { accessToken } = await registerAndLogin(app, "user");
-    const res = await request(app).get("/wallet").set("Authorization", `Bearer ${accessToken}`);
+    const res = await request(app).get("/user/wallet").set("Authorization", `Bearer ${accessToken}`);
     expect(res.status).toBe(200);
     expect(res.body.balancePaise).toBe(0);
   });
@@ -17,13 +17,13 @@ describe("Wallet (dev-credit escape hatch)", () => {
     const { accessToken } = await registerAndLogin(app, "user");
 
     const credit = await request(app)
-      .post("/wallet/dev-credit")
+      .post("/user/wallet/dev-credit")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ amountPaise: 50000 });
     expect(credit.status).toBe(200);
     expect(credit.body.balancePaise).toBe(50000);
 
-    const wallet = await request(app).get("/wallet").set("Authorization", `Bearer ${accessToken}`);
+    const wallet = await request(app).get("/user/wallet").set("Authorization", `Bearer ${accessToken}`);
     expect(wallet.body.balancePaise).toBe(50000);
   });
 
@@ -31,7 +31,7 @@ describe("Wallet (dev-credit escape hatch)", () => {
     const app = createApp();
     const { accessToken } = await registerAndLogin(app, "host");
     const res = await request(app)
-      .post("/wallet/dev-credit")
+      .post("/host/wallet/dev-credit")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ amountPaise: 1000 });
     expect(res.status).toBe(403);
@@ -40,7 +40,7 @@ describe("Wallet (dev-credit escape hatch)", () => {
   it("a host's wallet endpoint reports bean balance, starting at zero", async () => {
     const app = createApp();
     const { accessToken } = await registerAndLogin(app, "host");
-    const res = await request(app).get("/wallet").set("Authorization", `Bearer ${accessToken}`);
+    const res = await request(app).get("/host/wallet").set("Authorization", `Bearer ${accessToken}`);
     expect(res.status).toBe(200);
     expect(res.body.beanBalance).toBe(0);
   });

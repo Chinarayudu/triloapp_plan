@@ -7,7 +7,7 @@ describe("Profile endpoints", () => {
   it("returns the current user via GET /me", async () => {
     const app = createApp();
     const { accessToken, user } = await registerAndLogin(app);
-    const res = await request(app).get("/me").set("Authorization", `Bearer ${accessToken}`);
+    const res = await request(app).get("/user/me").set("Authorization", `Bearer ${accessToken}`);
     expect(res.status).toBe(200);
     expect(res.body.id).toBe(user.id);
     expect(res.body.hostProfile).toBeUndefined();
@@ -17,7 +17,7 @@ describe("Profile endpoints", () => {
     const app = createApp();
     const { accessToken } = await registerAndLogin(app);
     const res = await request(app)
-      .patch("/me")
+      .patch("/user/me")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ name: "Test User", email: "test@example.com", dob: "2000-01-01" });
     expect(res.status).toBe(200);
@@ -29,7 +29,7 @@ describe("Profile endpoints", () => {
     const app = createApp();
     const { accessToken } = await registerAndLogin(app, "user");
     const res = await request(app)
-      .patch("/me/host-profile")
+      .patch("/user/me/host-profile")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ bio: "hi" });
     expect(res.status).toBe(403);
@@ -39,7 +39,7 @@ describe("Profile endpoints", () => {
     const app = createApp();
     const { accessToken } = await registerAndLogin(app, "host");
     const res = await request(app)
-      .patch("/me/host-profile")
+      .patch("/host/me/host-profile")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ bio: "Hi there", ratePerMinutePaise: 5000 });
     expect(res.status).toBe(200);

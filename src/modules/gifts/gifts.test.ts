@@ -4,7 +4,7 @@ import { createApp } from "../../app";
 import { fundUserWallet, registerAndLogin } from "../../test/helpers";
 
 async function getSeededGift(app: ReturnType<typeof createApp>, accessToken: string, name: string) {
-  const res = await request(app).get("/gifts").set("Authorization", `Bearer ${accessToken}`);
+  const res = await request(app).get("/user/gifts").set("Authorization", `Bearer ${accessToken}`);
   const gift = res.body.gifts.find((g: { name: string }) => g.name === name);
   if (!gift) throw new Error(`Seeded gift "${name}" not found — did db:seed run?`);
   return gift;
@@ -14,7 +14,7 @@ describe("Gifts: catalog and sending", () => {
   it("lists the active gift catalog", async () => {
     const app = createApp();
     const { accessToken } = await registerAndLogin(app, "user");
-    const res = await request(app).get("/gifts").set("Authorization", `Bearer ${accessToken}`);
+    const res = await request(app).get("/user/gifts").set("Authorization", `Bearer ${accessToken}`);
     expect(res.status).toBe(200);
     expect(res.body.gifts.length).toBeGreaterThan(0);
     expect(res.body.gifts.every((g: { active: boolean }) => g.active)).toBe(true);
@@ -29,17 +29,17 @@ describe("Gifts: catalog and sending", () => {
     const rose = await getSeededGift(app, user.accessToken, "Rose"); // seeded at 1000 paise
 
     const send = await request(app)
-      .post("/gifts/send")
+      .post("/user/gifts/send")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ recipientId: host.user.id, giftId: rose.id });
     expect(send.status).toBe(201);
     // 1000 paise, 20% seeded commission -> 200 commission, 800 net -> 800 beans (1:1)
     expect(send.body.beansCredited).toBe(800);
 
-    const userWallet = await request(app).get("/wallet").set("Authorization", `Bearer ${user.accessToken}`);
+    const userWallet = await request(app).get("/user/wallet").set("Authorization", `Bearer ${user.accessToken}`);
     expect(userWallet.body.balancePaise).toBe(5000 - 1000);
 
-    const hostWallet = await request(app).get("/wallet").set("Authorization", `Bearer ${host.accessToken}`);
+    const hostWallet = await request(app).get("/host/wallet").set("Authorization", `Bearer ${host.accessToken}`);
     expect(hostWallet.body.beanBalance).toBe(800);
   });
 
@@ -50,7 +50,7 @@ describe("Gifts: catalog and sending", () => {
     await fundUserWallet(app, user.accessToken, 5000);
 
     const res = await request(app)
-      .post("/gifts/send")
+      .post("/user/gifts/send")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ recipientId: host.user.id, giftId: "00000000-0000-0000-0000-000000000000" });
     expect(res.status).toBe(404);
@@ -64,7 +64,7 @@ describe("Gifts: catalog and sending", () => {
     const rose = await getSeededGift(app, user1.accessToken, "Rose");
 
     const res = await request(app)
-      .post("/gifts/send")
+      .post("/user/gifts/send")
       .set("Authorization", `Bearer ${user1.accessToken}`)
       .send({ recipientId: user2.user.id, giftId: rose.id });
     expect(res.status).toBe(400);
@@ -77,7 +77,7 @@ describe("Gifts: catalog and sending", () => {
     const rose = await getSeededGift(app, user.accessToken, "Rose");
 
     const res = await request(app)
-      .post("/gifts/send")
+      .post("/user/gifts/send")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ recipientId: host.user.id, giftId: rose.id });
     expect(res.status).toBe(402);
@@ -90,7 +90,7 @@ describe("Gifts: catalog and sending", () => {
     const rose = await getSeededGift(app, host.accessToken, "Rose");
 
     const res = await request(app)
-      .post("/gifts/send")
+      .post("/host/gifts/send")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ recipientId: otherHost.user.id, giftId: rose.id });
     expect(res.status).toBe(403);
@@ -104,7 +104,7 @@ describe("Gifts: gift requests", () => {
     const user = await registerAndLogin(app, "user");
 
     const res = await request(app)
-      .post("/gifts/request")
+      .post("/host/gifts/request")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ userId: user.user.id });
     expect(res.status).toBe(200);
@@ -117,7 +117,7 @@ describe("Gifts: gift requests", () => {
     const user2 = await registerAndLogin(app, "user");
 
     const res = await request(app)
-      .post("/gifts/request")
+      .post("/user/gifts/request")
       .set("Authorization", `Bearer ${user1.accessToken}`)
       .send({ userId: user2.user.id });
     expect(res.status).toBe(403);
@@ -129,7 +129,7 @@ describe("Gifts: gift requests", () => {
     const host2 = await registerAndLogin(app, "host");
 
     const res = await request(app)
-      .post("/gifts/request")
+      .post("/host/gifts/request")
       .set("Authorization", `Bearer ${host1.accessToken}`)
       .send({ userId: host2.user.id });
     expect(res.status).toBe(400);

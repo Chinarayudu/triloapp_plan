@@ -5,7 +5,7 @@ import pinoHttp from "pino-http";
 import { logger } from "./lib/logger";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 import { adminRouter } from "./modules/admin/admin.routes";
-import { createAuthRouter } from "./modules/auth/auth.routes";
+import { createAdminAuthRouter, createOtpAuthRouter, createSessionRouter } from "./modules/auth/auth.routes";
 import { callsRouter } from "./modules/calls/calls.routes";
 import { chatRouter } from "./modules/chat/chat.routes";
 import { giftsRouter } from "./modules/gifts/gifts.routes";
@@ -29,19 +29,44 @@ export function createApp(): Express {
   app.use(pinoHttp({ logger }));
 
   app.use("/health", healthRouter);
-  app.use("/auth", createAuthRouter());
-  app.use(usersRouter);
-  app.use(hostsRouter);
-  app.use(walletRouter);
-  app.use(vipRouter);
-  app.use(earningsRouter);
-  app.use(callsRouter);
-  app.use(chatRouter);
-  app.use(giftsRouter);
-  app.use(liveRouter);
-  app.use(withdrawalsRouter);
-  app.use(moderationRouter);
-  app.use(notificationsRouter);
+  app.use("/admin/auth", createAdminAuthRouter()); // /admin/auth/login
+
+  // Session lifecycle (refresh/logout) doesn't vary by role — mounted at all
+  // three prefixes from one shared instance so every app's token still works
+  // post-split without duplicating the rotate/revoke logic three times.
+  const sessionRouter = createSessionRouter();
+  for (const prefix of ["/user/auth", "/host/auth", "/admin/auth"]) app.use(prefix, sessionRouter);
+
+  // Every User/Host-facing router below is mounted twice, once under /user
+  // and once under /host, at the *same* router instance both times (not a
+  // fresh one per mount) — the routes inside already gate who can actually
+  // succeed via requireRole/ownership checks (e.g. POST /calls/:id/accept
+  // still 403s a user regardless of which prefix they hit it through), so
+  // this changes no behavior. What it buys: a request or error in the logs
+  // is now attributable to which app made it by URL alone (API-design
+  // follow-up) — previously User and Host called the exact same paths and
+  // an issue with, say, /calls couldn't be pinned to one app without also
+  // checking the caller's JWT role.
+  const otpAuthRouter = createOtpAuthRouter();
+  const perAppRouters = [
+    usersRouter,
+    hostsRouter,
+    walletRouter,
+    vipRouter,
+    earningsRouter,
+    callsRouter,
+    chatRouter,
+    giftsRouter,
+    liveRouter,
+    withdrawalsRouter,
+    moderationRouter,
+    notificationsRouter,
+  ];
+  for (const prefix of ["/user", "/host"]) {
+    app.use(`${prefix}/auth`, otpAuthRouter);
+    for (const router of perAppRouters) app.use(prefix, router);
+  }
+
   app.use(adminRouter);
 
   app.use(notFoundHandler);

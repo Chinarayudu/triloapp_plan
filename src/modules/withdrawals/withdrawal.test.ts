@@ -20,7 +20,7 @@ async function approveHostKyc(
   hostUserId: string,
 ): Promise<string> {
   const uploadUrlRes = await request(app)
-    .post("/me/kyc/upload-url")
+    .post("/host/me/kyc/upload-url")
     .set("Authorization", `Bearer ${hostAccessToken}`)
     .send({ contentType: "application/pdf" });
   await fetch(uploadUrlRes.body.uploadUrl, {
@@ -29,7 +29,7 @@ async function approveHostKyc(
     body: "fake kyc document for withdrawal tests",
   });
   await request(app)
-    .post("/me/kyc")
+    .post("/host/me/kyc")
     .set("Authorization", `Bearer ${hostAccessToken}`)
     .send({ documents: [{ documentType: "id_front", key: uploadUrlRes.body.key }] });
 
@@ -45,7 +45,7 @@ async function approveHostKyc(
 
 async function setPayoutDetails(app: ReturnType<typeof createApp>, hostAccessToken: string): Promise<void> {
   const res = await request(app)
-    .post("/me/payout-methods")
+    .post("/host/me/payout-methods")
     .set("Authorization", `Bearer ${hostAccessToken}`)
     .send({ type: "upi", vpa: "host@upi" });
   expect(res.status).toBe(201);
@@ -62,17 +62,17 @@ async function fundHostBeans(
   targetBeans: number,
 ): Promise<number> {
   const sender = await registerAndLogin(app, "user");
-  const giftsRes = await request(app).get("/gifts").set("Authorization", `Bearer ${sender.accessToken}`);
+  const giftsRes = await request(app).get("/user/gifts").set("Authorization", `Bearer ${sender.accessToken}`);
   const crown = giftsRes.body.gifts.find((g: { name: string }) => g.name === "Crown");
 
   let beanBalance = 0;
   while (beanBalance < targetBeans) {
     await fundUserWallet(app, sender.accessToken, crown.pricePaise);
     await request(app)
-      .post("/gifts/send")
+      .post("/user/gifts/send")
       .set("Authorization", `Bearer ${sender.accessToken}`)
       .send({ recipientId: hostUserId, giftId: crown.id });
-    const walletRes = await request(app).get("/wallet").set("Authorization", `Bearer ${hostAccessToken}`);
+    const walletRes = await request(app).get("/host/wallet").set("Authorization", `Bearer ${hostAccessToken}`);
     beanBalance = walletRes.body.beanBalance;
   }
   return beanBalance;
@@ -91,7 +91,7 @@ describe("Withdrawals", () => {
   it("rejects a withdrawal request when KYC isn't approved", async () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
-    const res = await request(app).post("/withdrawals").set("Authorization", `Bearer ${host.accessToken}`).send({ beans: 5000 });
+    const res = await request(app).post("/host/withdrawals").set("Authorization", `Bearer ${host.accessToken}`).send({ beans: 5000 });
     expect(res.status).toBe(403);
   });
 
@@ -100,7 +100,7 @@ describe("Withdrawals", () => {
     const host = await registerAndLogin(app, "host");
     cleanupKeys.push(await approveHostKyc(app, host.accessToken, host.user.id));
 
-    const res = await request(app).post("/withdrawals").set("Authorization", `Bearer ${host.accessToken}`).send({ beans: 5000 });
+    const res = await request(app).post("/host/withdrawals").set("Authorization", `Bearer ${host.accessToken}`).send({ beans: 5000 });
     expect(res.status).toBe(403);
   });
 
@@ -113,14 +113,14 @@ describe("Withdrawals", () => {
 
     // Min withdrawal is ₹50 (5000 paise); at 1 paise/bean, 100 beans is
     // nowhere near it.
-    const res = await request(app).post("/withdrawals").set("Authorization", `Bearer ${host.accessToken}`).send({ beans: 100 });
+    const res = await request(app).post("/host/withdrawals").set("Authorization", `Bearer ${host.accessToken}`).send({ beans: 100 });
     expect(res.status).toBe(400);
   });
 
   it("only hosts can request a withdrawal", async () => {
     const app = createApp();
     const user = await registerAndLogin(app, "user");
-    const res = await request(app).post("/withdrawals").set("Authorization", `Bearer ${user.accessToken}`).send({ beans: 5000 });
+    const res = await request(app).post("/user/withdrawals").set("Authorization", `Bearer ${user.accessToken}`).send({ beans: 5000 });
     expect(res.status).toBe(403);
   });
 
@@ -132,7 +132,7 @@ describe("Withdrawals", () => {
     const beanBalance = await fundHostBeans(app, host.accessToken, host.user.id, 6000);
 
     const res = await request(app)
-      .post("/withdrawals")
+      .post("/host/withdrawals")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ beans: 6000 });
     expect(res.status).toBe(201);
@@ -144,7 +144,7 @@ describe("Withdrawals", () => {
     expect(res.body.netPayoutPaise).toBe(5940);
     expect(res.body.payoutTxnId).toMatch(/^dev-payout-/);
 
-    const walletRes = await request(app).get("/wallet").set("Authorization", `Bearer ${host.accessToken}`);
+    const walletRes = await request(app).get("/host/wallet").set("Authorization", `Bearer ${host.accessToken}`);
     expect(walletRes.body.beanBalance).toBe(beanBalance - 6000);
   });
 
@@ -158,7 +158,7 @@ describe("Withdrawals", () => {
     await fundHostBeans(app, host.accessToken, host.user.id, 50001);
 
     const created = await request(app)
-      .post("/withdrawals")
+      .post("/host/withdrawals")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ beans: 50001 });
     expect(created.status).toBe(201);
@@ -183,7 +183,7 @@ describe("Withdrawals", () => {
     const beanBalance = await fundHostBeans(app, host.accessToken, host.user.id, 50001);
 
     const created = await request(app)
-      .post("/withdrawals")
+      .post("/host/withdrawals")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ beans: 50001 });
 
@@ -195,7 +195,7 @@ describe("Withdrawals", () => {
     expect(rejected.status).toBe(200);
     expect(rejected.body.status).toBe("rejected");
 
-    const walletRes = await request(app).get("/wallet").set("Authorization", `Bearer ${host.accessToken}`);
+    const walletRes = await request(app).get("/host/wallet").set("Authorization", `Bearer ${host.accessToken}`);
     expect(walletRes.body.beanBalance).toBe(beanBalance);
   });
 
@@ -207,13 +207,13 @@ describe("Withdrawals", () => {
     await fundHostBeans(app, host.accessToken, host.user.id, 6000);
 
     const created = await request(app)
-      .post("/withdrawals")
+      .post("/host/withdrawals")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ beans: 6000 });
     expect(created.body.status).toBe("processing");
 
     const resolved = await request(app)
-      .post(`/withdrawals/${created.body.id}/dev-resolve-payout`)
+      .post(`/host/withdrawals/${created.body.id}/dev-resolve-payout`)
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ outcome: "paid" });
     expect(resolved.status).toBe(200);
@@ -228,19 +228,19 @@ describe("Withdrawals", () => {
     const beanBalance = await fundHostBeans(app, host.accessToken, host.user.id, 6000);
 
     const created = await request(app)
-      .post("/withdrawals")
+      .post("/host/withdrawals")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ beans: 6000 });
 
     const resolved = await request(app)
-      .post(`/withdrawals/${created.body.id}/dev-resolve-payout`)
+      .post(`/host/withdrawals/${created.body.id}/dev-resolve-payout`)
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ outcome: "failed", reason: "Bank account rejected the transfer" });
     expect(resolved.status).toBe(200);
     expect(resolved.body.status).toBe("failed");
     expect(resolved.body.failureReason).toBe("Bank account rejected the transfer");
 
-    const walletRes = await request(app).get("/wallet").set("Authorization", `Bearer ${host.accessToken}`);
+    const walletRes = await request(app).get("/host/wallet").set("Authorization", `Bearer ${host.accessToken}`);
     expect(walletRes.body.beanBalance).toBe(beanBalance - 6000 + 6000); // debited then reversed
   });
 
@@ -251,10 +251,10 @@ describe("Withdrawals", () => {
     await setPayoutDetails(app, host.accessToken);
     await fundHostBeans(app, host.accessToken, host.user.id, 12000);
 
-    const first = await request(app).post("/withdrawals").set("Authorization", `Bearer ${host.accessToken}`).send({ beans: 6000 });
+    const first = await request(app).post("/host/withdrawals").set("Authorization", `Bearer ${host.accessToken}`).send({ beans: 6000 });
     expect(first.status).toBe(201);
 
-    const second = await request(app).post("/withdrawals").set("Authorization", `Bearer ${host.accessToken}`).send({ beans: 6000 });
+    const second = await request(app).post("/host/withdrawals").set("Authorization", `Bearer ${host.accessToken}`).send({ beans: 6000 });
     expect(second.status).toBe(429);
   });
 
@@ -266,14 +266,14 @@ describe("Withdrawals", () => {
     await setPayoutDetails(app, host.accessToken);
     await fundHostBeans(app, host.accessToken, host.user.id, 6000);
 
-    const created = await request(app).post("/withdrawals").set("Authorization", `Bearer ${host.accessToken}`).send({ beans: 6000 });
+    const created = await request(app).post("/host/withdrawals").set("Authorization", `Bearer ${host.accessToken}`).send({ beans: 6000 });
 
-    const list = await request(app).get("/withdrawals").set("Authorization", `Bearer ${host.accessToken}`);
+    const list = await request(app).get("/host/withdrawals").set("Authorization", `Bearer ${host.accessToken}`);
     expect(list.body.requests).toHaveLength(1);
     expect(list.body.requests[0].id).toBe(created.body.id);
 
     const forbidden = await request(app)
-      .get(`/withdrawals/${created.body.id}`)
+      .get(`/host/withdrawals/${created.body.id}`)
       .set("Authorization", `Bearer ${otherHost.accessToken}`);
     expect(forbidden.status).toBe(403);
   });
@@ -285,7 +285,7 @@ describe("Payout methods", () => {
     const host = await registerAndLogin(app, "host");
 
     const upi = await request(app)
-      .post("/me/payout-methods")
+      .post("/host/me/payout-methods")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ type: "upi", vpa: "host@okhdfcbank" });
     expect(upi.status).toBe(201);
@@ -293,7 +293,7 @@ describe("Payout methods", () => {
     expect(upi.body.details).toEqual({ type: "upi", vpa: "host@okhdfcbank" });
 
     const badIfsc = await request(app)
-      .post("/me/payout-methods")
+      .post("/host/me/payout-methods")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ type: "bank", accountHolderName: "Test Host", accountNumber: "1234567890", ifsc: "not-an-ifsc" });
     expect(badIfsc.status).toBe(400);
@@ -303,7 +303,7 @@ describe("Payout methods", () => {
     const app = createApp();
     const user = await registerAndLogin(app, "user");
     const res = await request(app)
-      .post("/me/payout-methods")
+      .post("/user/me/payout-methods")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ type: "upi", vpa: "user@upi" });
     expect(res.status).toBe(403);
@@ -314,23 +314,23 @@ describe("Payout methods", () => {
     const host = await registerAndLogin(app, "host");
 
     const first = await request(app)
-      .post("/me/payout-methods")
+      .post("/host/me/payout-methods")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ type: "upi", vpa: "primary@upi" });
     const second = await request(app)
-      .post("/me/payout-methods")
+      .post("/host/me/payout-methods")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ type: "upi", vpa: "backup@upi" });
     expect(first.body.isPrimary).toBe(true);
     expect(second.body.isPrimary).toBe(false);
 
     const promoted = await request(app)
-      .patch(`/me/payout-methods/${second.body.id}/primary`)
+      .patch(`/host/me/payout-methods/${second.body.id}/primary`)
       .set("Authorization", `Bearer ${host.accessToken}`);
     expect(promoted.status).toBe(200);
     expect(promoted.body.isPrimary).toBe(true);
 
-    const list = await request(app).get("/me/payout-methods").set("Authorization", `Bearer ${host.accessToken}`);
+    const list = await request(app).get("/host/me/payout-methods").set("Authorization", `Bearer ${host.accessToken}`);
     const primaryCount = list.body.methods.filter((m: { isPrimary: boolean }) => m.isPrimary).length;
     expect(primaryCount).toBe(1);
   });
@@ -345,7 +345,7 @@ describe("Withdrawal admin detail — verification checklist (admin design follo
     await fundHostBeans(app, host.accessToken, host.user.id, 50001); // above the auto-approve threshold — stays pending
 
     const created = await request(app)
-      .post("/withdrawals")
+      .post("/host/withdrawals")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ beans: 50001 });
     expect(created.body.status).toBe("pending");
@@ -363,7 +363,7 @@ describe("Withdrawal admin detail — verification checklist (admin design follo
 
     const reporter = await registerAndLogin(app, "user");
     await request(app)
-      .post("/moderation/reports")
+      .post("/user/moderation/reports")
       .set("Authorization", `Bearer ${reporter.accessToken}`)
       .send({ targetType: "host", targetId: host.user.id, reason: "Suspicious activity" });
 

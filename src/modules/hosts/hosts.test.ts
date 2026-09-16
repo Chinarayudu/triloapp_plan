@@ -13,12 +13,12 @@ describe("Host discovery + presence (REST)", () => {
     // accumulation (see BUG_HISTORY.md workflow: not a product bug, a
     // known tradeoff pending a dedicated test DB branch).
     await request(app)
-      .patch("/me/host-profile")
+      .patch("/host/me/host-profile")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ ratePerMinutePaise: 1 });
 
     const res = await request(app)
-      .get("/hosts?pageSize=50&sort=rate_asc")
+      .get("/host/hosts?pageSize=50&sort=rate_asc")
       .set("Authorization", `Bearer ${accessToken}`);
 
     expect(res.status).toBe(200);
@@ -34,20 +34,20 @@ describe("Host discovery + presence (REST)", () => {
     const plainUser = await registerAndLogin(app, "user");
 
     const forbidden = await request(app)
-      .patch("/me/presence")
+      .patch("/user/me/presence")
       .set("Authorization", `Bearer ${plainUser.accessToken}`)
       .send({ isOnline: true });
     expect(forbidden.status).toBe(403);
 
     const toggled = await request(app)
-      .patch("/me/presence")
+      .patch("/host/me/presence")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ isOnline: true });
     expect(toggled.status).toBe(200);
     expect(toggled.body.isOnline).toBe(true);
 
     const onlineOnly = await request(app)
-      .get("/hosts?onlineOnly=true&pageSize=50")
+      .get("/host/hosts?onlineOnly=true&pageSize=50")
       .set("Authorization", `Bearer ${host.accessToken}`);
     const found = onlineOnly.body.hosts.find((h: { id: string }) => h.id === host.user.id);
     expect(found).toBeTruthy();
@@ -56,7 +56,7 @@ describe("Host discovery + presence (REST)", () => {
 
   it("requires authentication to browse the host list", async () => {
     const app = createApp();
-    const res = await request(app).get("/hosts");
+    const res = await request(app).get("/user/hosts");
     expect(res.status).toBe(401);
   });
 });

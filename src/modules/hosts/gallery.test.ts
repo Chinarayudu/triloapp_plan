@@ -10,33 +10,33 @@ describe("Host gallery (admin design follow-up)", () => {
     const otherHost = await registerAndLogin(app, "host");
 
     const photo = await request(app)
-      .post("/me/host-profile/gallery")
+      .post("/host/me/host-profile/gallery")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ mediaType: "photo", url: "https://example.com/photo.jpg" });
     expect(photo.status).toBe(201);
     expect(photo.body.mediaType).toBe("photo");
 
     const video = await request(app)
-      .post("/me/host-profile/gallery")
+      .post("/host/me/host-profile/gallery")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ mediaType: "video", url: "https://example.com/video.mp4", durationSeconds: 24 });
     expect(video.status).toBe(201);
     expect(video.body.durationSeconds).toBe(24);
 
-    const list = await request(app).get("/me/host-profile/gallery").set("Authorization", `Bearer ${host.accessToken}`);
+    const list = await request(app).get("/host/me/host-profile/gallery").set("Authorization", `Bearer ${host.accessToken}`);
     expect(list.body.items).toHaveLength(2);
 
     const otherHostDelete = await request(app)
-      .delete(`/me/host-profile/gallery/${photo.body.id}`)
+      .delete(`/host/me/host-profile/gallery/${photo.body.id}`)
       .set("Authorization", `Bearer ${otherHost.accessToken}`);
     expect(otherHostDelete.status).toBe(404); // not theirs — doesn't exist from their point of view
 
     const ownDelete = await request(app)
-      .delete(`/me/host-profile/gallery/${photo.body.id}`)
+      .delete(`/host/me/host-profile/gallery/${photo.body.id}`)
       .set("Authorization", `Bearer ${host.accessToken}`);
     expect(ownDelete.status).toBe(200);
 
-    const listAfter = await request(app).get("/me/host-profile/gallery").set("Authorization", `Bearer ${host.accessToken}`);
+    const listAfter = await request(app).get("/host/me/host-profile/gallery").set("Authorization", `Bearer ${host.accessToken}`);
     expect(listAfter.body.items).toHaveLength(1);
   });
 
@@ -44,7 +44,7 @@ describe("Host gallery (admin design follow-up)", () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
     const item = await request(app)
-      .post("/me/host-profile/gallery")
+      .post("/host/me/host-profile/gallery")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ mediaType: "photo", url: "https://example.com/moderated.jpg" });
 
@@ -60,10 +60,15 @@ describe("Host gallery (admin design follow-up)", () => {
       .set("Authorization", `Bearer ${admin.accessToken}`);
     expect(adminDelete.status).toBe(200);
 
-    const listAfter = await request(app).get("/me/host-profile/gallery").set("Authorization", `Bearer ${host.accessToken}`);
+    const listAfter = await request(app).get("/host/me/host-profile/gallery").set("Authorization", `Bearer ${host.accessToken}`);
     expect(listAfter.body.items).toHaveLength(0);
 
-    const auditLog = await request(app).get("/admin/audit-log?limit=5").set("Authorization", `Bearer ${admin.accessToken}`);
+    // Filtered to this admin specifically — entries[0] alone isn't reliable
+    // under the full suite's concurrent test files, which write their own
+    // audit log rows via other admin actions at the same time.
+    const auditLog = await request(app)
+      .get(`/admin/audit-log?limit=5&adminId=${admin.user.id}`)
+      .set("Authorization", `Bearer ${admin.accessToken}`);
     expect(auditLog.body.entries[0].action).toBe("gallery.delete");
   });
 });

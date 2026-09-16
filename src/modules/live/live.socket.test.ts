@@ -37,7 +37,7 @@ describe("Live broadcasting: room fan-out over socket", () => {
     const viewer1 = await registerAndLogin(app, "user");
     const viewer2 = await registerAndLogin(app, "user"); // never joins
 
-    const start = await request(app).post("/live/broadcasts").set("Authorization", `Bearer ${host.accessToken}`);
+    const start = await request(app).post("/host/live/broadcasts").set("Authorization", `Bearer ${host.accessToken}`);
     const broadcastId = start.body.broadcastId;
 
     // Socket must connect BEFORE calling /join — room membership is
@@ -45,7 +45,7 @@ describe("Live broadcasting: room fan-out over socket", () => {
     viewer1Socket = await connect(port, viewer1.accessToken);
     viewer2Socket = await connect(port, viewer2.accessToken);
     await request(app)
-      .post(`/live/broadcasts/${broadcastId}/join`)
+      .post(`/user/live/broadcasts/${broadcastId}/join`)
       .set("Authorization", `Bearer ${viewer1.accessToken}`);
     // viewer2 deliberately does not join.
 
@@ -54,7 +54,7 @@ describe("Live broadcasting: room fan-out over socket", () => {
     viewer2Socket.on("live:chat", (msg) => received.push(msg));
 
     await request(app)
-      .post(`/live/broadcasts/${broadcastId}/chat`)
+      .post(`/host/live/broadcasts/${broadcastId}/chat`)
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ content: "hello viewers" });
 
@@ -75,19 +75,19 @@ describe("Live broadcasting: room fan-out over socket", () => {
     const viewer = await registerAndLogin(app, "user");
     await fundUserWallet(app, sender.accessToken, 5000);
 
-    const start = await request(app).post("/live/broadcasts").set("Authorization", `Bearer ${host.accessToken}`);
+    const start = await request(app).post("/host/live/broadcasts").set("Authorization", `Bearer ${host.accessToken}`);
     const broadcastId = start.body.broadcastId;
 
     viewer1Socket = await connect(port, viewer.accessToken);
-    await request(app).post(`/live/broadcasts/${broadcastId}/join`).set("Authorization", `Bearer ${viewer.accessToken}`);
+    await request(app).post(`/user/live/broadcasts/${broadcastId}/join`).set("Authorization", `Bearer ${viewer.accessToken}`);
 
-    const giftsRes = await request(app).get("/gifts").set("Authorization", `Bearer ${sender.accessToken}`);
+    const giftsRes = await request(app).get("/user/gifts").set("Authorization", `Bearer ${sender.accessToken}`);
     const rose = giftsRes.body.gifts.find((g: { name: string }) => g.name === "Rose");
 
     const received = new Promise<{ gift: { name: string } }>((resolve) => viewer1Socket!.on("gift:received", resolve));
 
     await request(app)
-      .post("/gifts/send")
+      .post("/user/gifts/send")
       .set("Authorization", `Bearer ${sender.accessToken}`)
       .send({ recipientId: host.user.id, giftId: rose.id, context: "live", contextId: broadcastId });
 

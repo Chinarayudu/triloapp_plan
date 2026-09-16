@@ -29,7 +29,7 @@ describe("Gifts: live notifications", () => {
     const host = await registerAndLogin(app, "host");
     await fundUserWallet(app, user.accessToken, 5000);
 
-    const giftsRes = await request(app).get("/gifts").set("Authorization", `Bearer ${user.accessToken}`);
+    const giftsRes = await request(app).get("/user/gifts").set("Authorization", `Bearer ${user.accessToken}`);
     const rose = giftsRes.body.gifts.find((g: { name: string }) => g.name === "Rose");
 
     clientSocket = ioClient(`http://localhost:${port}`, { auth: { token: host.accessToken } });
@@ -41,7 +41,7 @@ describe("Gifts: live notifications", () => {
     const received = new Promise<{ gift: { name: string } }>((resolve) => clientSocket!.on("gift:received", resolve));
 
     await request(app)
-      .post("/gifts/send")
+      .post("/user/gifts/send")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ recipientId: host.user.id, giftId: rose.id });
 
@@ -57,7 +57,7 @@ describe("Gifts: live notifications", () => {
     // No socket server attached to this app instance at all — isUserConnected() reports false.
 
     await request(app)
-      .post("/gifts/request")
+      .post("/host/gifts/request")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ userId: user.user.id });
 

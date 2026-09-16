@@ -7,6 +7,12 @@ keep it in sync whenever an event is added, renamed, or its payload
 changes. Server code lives in [`src/realtime/socket.ts`](src/realtime/socket.ts)
 plus the `emitToUser`/`emitToRoom` call sites listed below.
 
+The HTTP paths referenced below as event triggers are shown bare (`/calls`,
+`/live/broadcasts`, `/me/presence`, ...) — the real paths are namespaced
+per app, `/user/...` or `/host/...` (see `BACKEND_PLAN.md`'s "API namespaced
+per app" note). The socket connection/events themselves aren't affected —
+this only changes REST paths, not `io.emit`/room names/event payloads.
+
 ## Connecting
 
 ```js

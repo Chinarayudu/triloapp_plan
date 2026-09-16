@@ -10,7 +10,7 @@ describe("Moderation reports (BR-MOD-04/05)", () => {
     const host = await registerAndLogin(app, "host");
 
     const filed = await request(app)
-      .post("/moderation/reports")
+      .post("/user/moderation/reports")
       .set("Authorization", `Bearer ${reporter.accessToken}`)
       .send({ targetType: "host", targetId: host.user.id, reason: "Inappropriate behavior on call" });
     expect(filed.status).toBe(201);
@@ -42,7 +42,7 @@ describe("Moderation reports (BR-MOD-04/05)", () => {
     const host = await registerAndLogin(app, "host");
 
     const filed = await request(app)
-      .post("/moderation/reports")
+      .post("/user/moderation/reports")
       .set("Authorization", `Bearer ${reporter.accessToken}`)
       .send({ targetType: "host", targetId: host.user.id, reason: "Scamming users off-platform" });
 
@@ -67,7 +67,7 @@ describe("Capture events (BR-MOD-03)", () => {
     const user = await registerAndLogin(app, "user");
 
     const first = await request(app)
-      .post("/moderation/capture-event")
+      .post("/user/moderation/capture-event")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ context: "call" });
     expect(first.status).toBe(201);
@@ -75,18 +75,18 @@ describe("Capture events (BR-MOD-03)", () => {
     expect(first.body.totalCaptureEvents).toBe(1);
 
     const second = await request(app)
-      .post("/moderation/capture-event")
+      .post("/user/moderation/capture-event")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ context: "live" });
     expect(second.body.policyAction).toBe("warning");
 
     await request(app)
-      .post("/moderation/capture-event")
+      .post("/user/moderation/capture-event")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ context: "call" });
 
     const fourth = await request(app)
-      .post("/moderation/capture-event")
+      .post("/user/moderation/capture-event")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ context: "call" });
     expect(fourth.body.policyAction).toBe("escalated_for_review");
@@ -100,7 +100,7 @@ describe("Capture events (BR-MOD-03)", () => {
 
     // Resolving the report still doesn't suspend anyone by itself — that
     // stays a separate, explicit admin decision (same as any other report).
-    const account = await request(app).get("/me").set("Authorization", `Bearer ${user.accessToken}`);
+    const account = await request(app).get("/user/me").set("Authorization", `Bearer ${user.accessToken}`);
     expect(account.body.status).toBe("active");
 
     const events = await request(app).get("/admin/capture-events?limit=10").set("Authorization", `Bearer ${admin.accessToken}`);
@@ -115,7 +115,7 @@ describe("Moderation: combined Dismiss/Warn/Suspend/Ban action (admin design fol
     const reporter = await registerAndLogin(app, "user");
     const host = await registerAndLogin(app, "host");
     const filed = await request(app)
-      .post("/moderation/reports")
+      .post("/user/moderation/reports")
       .set("Authorization", `Bearer ${reporter.accessToken}`)
       .send({ targetType: "host", targetId: host.user.id, reason: "Borderline behavior" });
 
@@ -127,7 +127,7 @@ describe("Moderation: combined Dismiss/Warn/Suspend/Ban action (admin design fol
     expect(resolved.status).toBe(200);
     expect(resolved.body.status).toBe("resolved");
 
-    const hostDetail = await request(app).get("/me").set("Authorization", `Bearer ${host.accessToken}`);
+    const hostDetail = await request(app).get("/host/me").set("Authorization", `Bearer ${host.accessToken}`);
     expect(hostDetail.body.status).toBe("active"); // unaffected by a warning
 
     const auditLog = await request(app).get("/admin/audit-log?limit=5").set("Authorization", `Bearer ${admin.accessToken}`);
@@ -139,7 +139,7 @@ describe("Moderation: combined Dismiss/Warn/Suspend/Ban action (admin design fol
     const reporter = await registerAndLogin(app, "user");
     const host = await registerAndLogin(app, "host");
     const filed = await request(app)
-      .post("/moderation/reports")
+      .post("/user/moderation/reports")
       .set("Authorization", `Bearer ${reporter.accessToken}`)
       .send({ targetType: "host", targetId: host.user.id, reason: "Serious violation" });
 
@@ -150,7 +150,7 @@ describe("Moderation: combined Dismiss/Warn/Suspend/Ban action (admin design fol
       .send({ action: "resolved", accountAction: "suspend" });
     expect(resolved.status).toBe(200);
 
-    const hostDetail = await request(app).get("/me").set("Authorization", `Bearer ${host.accessToken}`);
+    const hostDetail = await request(app).get("/host/me").set("Authorization", `Bearer ${host.accessToken}`);
     expect(hostDetail.body.status).toBe("suspended");
   });
 
@@ -158,7 +158,7 @@ describe("Moderation: combined Dismiss/Warn/Suspend/Ban action (admin design fol
     const app = createApp();
     const reporter = await registerAndLogin(app, "user");
     const filed = await request(app)
-      .post("/moderation/reports")
+      .post("/user/moderation/reports")
       .set("Authorization", `Bearer ${reporter.accessToken}`)
       .send({ targetType: "live_broadcast", targetId: "00000000-0000-0000-0000-000000000000", reason: "False information" });
 

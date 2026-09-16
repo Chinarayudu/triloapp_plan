@@ -10,15 +10,15 @@ describe("Admin: general User/Host roster + detail (admin design follow-up)", ()
     const host = await registerAndLogin(app, "host");
     await fundUserWallet(app, user.accessToken, 5000);
 
-    const giftsRes = await request(app).get("/gifts").set("Authorization", `Bearer ${user.accessToken}`);
+    const giftsRes = await request(app).get("/user/gifts").set("Authorization", `Bearer ${user.accessToken}`);
     const rose = giftsRes.body.gifts.find((g: { name: string }) => g.name === "Rose");
     await request(app)
-      .post("/gifts/send")
+      .post("/user/gifts/send")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ recipientId: host.user.id, giftId: rose.id });
 
     await request(app)
-      .post("/moderation/reports")
+      .post("/user/moderation/reports")
       .set("Authorization", `Bearer ${user.accessToken}`)
       .send({ targetType: "host", targetId: host.user.id, reason: "Testing the reports panel" });
 
