@@ -34,7 +34,13 @@ export const adminPermissionEnum = pgEnum("admin_permission", ["finance", "moder
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   role: roleEnum("role").notNull(),
-  phone: text("phone").notNull().unique(),
+  // Unique per (phone, role) rather than phone alone (API-design follow-up)
+  // — the same phone number can hold a separate User account and a
+  // separate Host account (now genuinely different apps/API surfaces), and
+  // separately an admin/sub-admin account, each with its own id/wallet/
+  // profile. auth.routes.ts's otp/verify looks up strictly by (phone, the
+  // role being logged into), never "whichever account has this phone."
+  phone: text("phone").notNull(),
   name: text("name"),
   // Public @handle (User/Host Edit Profile screens) — distinct from name.
   // Nullable: existing accounts predate this field, and picking one isn't
@@ -69,7 +75,7 @@ export const users = pgTable("users", {
   permissions: adminPermissionEnum("permissions").array().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [unique().on(table.phone, table.role)]);
 
 // One row per HOST-role user. Presence (online/busy) is Redis-backed at
 // runtime (BACKEND_PLAN.md §4), not stored here — this table is profile

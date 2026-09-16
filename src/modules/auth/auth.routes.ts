@@ -61,10 +61,14 @@ export function createOtpAuthRouter(): Router {
       const { phone, code, role, deviceFingerprint } = req.body as z.infer<typeof verifySchema>;
       await verifyOtp(phone, code);
 
-      // role is only honored for brand-new signups — an existing account
-      // keeps whatever role it already has, so this can't be used to
-      // escalate an existing user into a host (or vice versa).
-      let user = await findUserByPhone(phone);
+      // Looked up strictly by (phone, role) — this phone number may
+      // separately have a "user" account, a "host" account, or both
+      // (users table is unique per phone+role, not phone alone), each a
+      // fully independent identity/wallet. Verifying via /user/auth/...
+      // with role "user" only ever finds-or-creates that phone's USER
+      // account; it can never return or escalate into its HOST account
+      // (or vice versa via /host/auth/...) — they're different rows.
+      let user = await findUserByPhone(phone, role);
       if (!user) {
         user = await createUser(phone, role);
       }

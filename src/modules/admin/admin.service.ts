@@ -343,7 +343,7 @@ export async function createSubAdmin(
   password: string,
   permissions: AdminPermission[],
 ): Promise<User> {
-  if (await findUserByPhone(phone)) throw new AppError(409, "That phone number is already registered");
+  if (await findUserByPhone(phone, "sub_admin")) throw new AppError(409, "That phone number is already registered as a sub-admin");
   if (await findUserByEmail(email)) throw new AppError(409, "That email is already registered");
 
   const passwordHash = await hashPassword(password);

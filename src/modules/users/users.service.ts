@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../../db/client";
 import { hostProfiles, hostWallets, notificationPreferences, users, wallets } from "../../db/schema";
 import { AppError } from "../../lib/errors";
@@ -8,8 +8,13 @@ import { revokeAllRefreshTokensForUser } from "../auth/token.service";
 
 export type SignupRole = "user" | "host";
 
-export async function findUserByPhone(phone: string) {
-  const [user] = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
+// Scoped to a specific role, not "whichever account has this phone" — the
+// same phone number can independently hold a User account, a Host account,
+// and an admin/sub-admin account (db/schema.ts's users table is now unique
+// per (phone, role), not phone alone). Every call site must know which of
+// those it's asking for; there's no meaningful "the" account for a phone.
+export async function findUserByPhone(phone: string, role: (typeof users.$inferSelect)["role"]) {
+  const [user] = await db.select().from(users).where(and(eq(users.phone, phone), eq(users.role, role))).limit(1);
   return user;
 }
 

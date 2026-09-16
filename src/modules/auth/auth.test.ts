@@ -43,18 +43,33 @@ describe("Auth: OTP + JWT flow", () => {
     expect(meRes.body.hostProfile).toBeTruthy();
   });
 
-  it("keeps an existing user's role even if verify is called again with a different role", async () => {
+  it("the same phone number can hold a separate User account and a separate Host account", async () => {
     const app = createApp();
     const phone = randomPhone();
     const firstReq = await request(app).post("/user/auth/otp/request").send({ phone });
-    await request(app).post("/user/auth/otp/verify").send({ phone, code: firstReq.body.devCode, role: "user" });
+    const firstVerify = await request(app)
+      .post("/user/auth/otp/verify")
+      .send({ phone, code: firstReq.body.devCode, role: "user" });
+    expect(firstVerify.body.user.role).toBe("user");
 
-    const secondReq = await request(app).post("/user/auth/otp/request").send({ phone });
+    // Verifying the SAME phone number via the Host surface doesn't touch,
+    // return, or escalate the User account above — (phone, role) is the
+    // real identity key (db/schema.ts's users table), so this creates a
+    // second, fully independent account rather than logging into the first.
+    const secondReq = await request(app).post("/host/auth/otp/request").send({ phone });
     const secondVerify = await request(app)
       .post("/host/auth/otp/verify")
       .send({ phone, code: secondReq.body.devCode, role: "host" });
+    expect(secondVerify.body.user.role).toBe("host");
+    expect(secondVerify.body.user.id).not.toBe(firstVerify.body.user.id);
 
-    expect(secondVerify.body.user.role).toBe("user");
+    // Verifying as "user" again still finds the original User account, not
+    // a third new one.
+    const thirdReq = await request(app).post("/user/auth/otp/request").send({ phone });
+    const thirdVerify = await request(app)
+      .post("/user/auth/otp/verify")
+      .send({ phone, code: thirdReq.body.devCode, role: "user" });
+    expect(thirdVerify.body.user.id).toBe(firstVerify.body.user.id);
   });
 
   it("rotates the refresh token and invalidates the old one on reuse", async () => {

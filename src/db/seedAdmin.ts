@@ -10,9 +10,8 @@ import { findUserByEmail, findUserByPhone } from "../modules/users/users.service
 //   npm run db:seed-admin -- +919876543210 admin@company.com "a-strong-password"
 // The account then authenticates via POST /auth/admin/login (email +
 // password, Phase 9 follow-up matching the admin web app's design) — this
-// script only creates the row. Phone is still required (users.phone is a
-// required unique column shared by every role) but isn't how this account
-// signs in.
+// script only creates the row. Phone is still required (users.phone is
+// required, unique per phone+role) but isn't how this account signs in.
 async function seedAdmin(): Promise<void> {
   const [phone, email, password] = process.argv.slice(2);
   if (!phone || !/^\+[1-9]\d{7,14}$/.test(phone) || !email || !password || password.length < 8) {
@@ -22,7 +21,7 @@ async function seedAdmin(): Promise<void> {
     process.exit(1);
   }
 
-  const existingByPhone = await findUserByPhone(phone);
+  const existingByPhone = await findUserByPhone(phone, "admin");
   const existingByEmail = await findUserByEmail(email);
   if (existingByPhone || existingByEmail) {
     const existing = existingByPhone ?? existingByEmail!;
