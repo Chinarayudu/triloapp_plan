@@ -20,6 +20,15 @@ Copy this for each new entry, filled in, added to the top of the log below.
 
 ## Log
 
+### [2026-09-17] Host permanently can't start a new live broadcast — "You already have a live broadcast running"
+
+**Symptom**: `POST /live/broadcasts` returns `409 "You already have a live broadcast running"` even though the host isn't actually broadcasting anything right now — every retry fails the same way, indefinitely.
+**Root cause**: same shape as the 2026-09-16 presence bug below — `live_broadcasts.status` was only ever cleared by an explicit `POST /live/broadcasts/:id/end`. Nothing corrected it when the host's connection dropped mid-broadcast without hitting that endpoint first (crash, closed tab, network loss; that day's Agora-chunk-load and remote-audio bugs were both plausible triggers). `startBroadcast`'s "already live?" check (`getActiveBroadcastForHost`) just reads that stale DB flag, so once stuck, every future start attempt 409s forever — the only escape before this fix was an admin's force-end.
+**Affected files**: `src/modules/live/live.service.ts` (new exported `endActiveBroadcastForHostIfAny`), `src/realtime/socket.ts` (fix — new exported `checkAbandonedBroadcast`), `src/config/env.ts` (new `LIVE_BROADCAST_DISCONNECT_GRACE_MS`), `vitest.config.ts` (test override), `src/modules/live/live.socket.test.ts` (new regression tests).
+**Fix**: on a socket's `disconnect`, after a grace period (`LIVE_BROADCAST_DISCONNECT_GRACE_MS`, default 15s) with no reconnect, `checkAbandonedBroadcast` auto-ends that host's active broadcast (if any) and fans out `live:ended` to the room, same as a real end. Deliberately *not* instant like the presence fix — ending a broadcast kicks every active viewer, so a quick reconnect (page reload, brief network blip) gets a chance to land first; a status-flag flicker doesn't carry the same cost.
+**Call sites checked**: `getActiveBroadcastForHost`/`endBroadcastById` (`live.service.ts`) — both already-existing private helpers, only new caller is `endActiveBroadcastForHostIfAny` itself. Full suite (129/129, including the two new tests) and `tsc --noEmit` pass.
+**General lesson**: this is the same lesson as the entry below, generalized — check any OTHER "explicit action sets it, nothing clears it automatically" flag in this codebase (there were two in two days) before assuming a given one is the last.
+
 ### [2026-09-16] Host never receives an incoming call — rings out with no visible error on either side
 
 **Symptom**: User calls a host who is shown as online; the call is accepted by the backend (no error to the caller) but the host's app never shows anything — no incoming-call screen, no notification. The call eventually times out/misses.

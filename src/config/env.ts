@@ -22,6 +22,12 @@ const envSchema = z.object({
   // so the interval only controls how often the *unattended* sweep runs.
   CALL_REAPER_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
   WALLET_RECONCILIATION_INTERVAL_MS: z.coerce.number().int().positive().default(60 * 60_000),
+  // How long a host's dropped connection gets before their live broadcast
+  // is auto-ended (realtime/socket.ts) — same "ops knob, real timers
+  // overridden to effectively-never in tests" convention as the two above.
+  // Directly callable outside the timer too (checkAbandonedBroadcast is
+  // exported specifically so tests don't wait on a real disconnect timer).
+  LIVE_BROADCAST_DISCONNECT_GRACE_MS: z.coerce.number().int().positive().default(15_000),
   // Optional as a group — otpSender.ts falls back to dev-mode logging when
   // any of these is missing. All three or none; there's no valid
   // partially-configured state.

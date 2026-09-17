@@ -24,6 +24,13 @@ export default defineConfig({
       // effectively-never anyway in case that ever changes.
       CALL_REAPER_INTERVAL_MS: "600000",
       WALLET_RECONCILIATION_INTERVAL_MS: "600000",
+      // Socket tests (calls.socket.test.ts, presence.socket.test.ts, etc.)
+      // call createSocketServer directly and do disconnect real sockets in
+      // cleanup — same "drive it deterministically instead of waiting on
+      // (or leaving dangling) a real timer" reasoning as the four above.
+      // Tests exercise the grace-period check itself by calling
+      // checkAbandonedBroadcast (realtime/socket.ts) directly.
+      LIVE_BROADCAST_DISCONNECT_GRACE_MS: "600000",
     },
   },
 });

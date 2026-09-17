@@ -1,8 +1,10 @@
 import type { Server as HttpServer } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
+import { env } from "../config/env";
 import { verifyAccessToken } from "../lib/jwt";
 import { logger } from "../lib/logger";
 import { isOnline as isHostMarkedOnline, setOffline as setHostOffline } from "../modules/hosts/presence.store";
+import { endActiveBroadcastForHostIfAny, liveRoomName } from "../modules/live/live.service";
 
 // Module-level singleton, same shape as db/client.ts's `pool`/`db` exports —
 // one Socket.io server per process, created once at startup, read from
@@ -49,16 +51,43 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
     // ("Host is not online") instead of that silent no-op.
     socket.on("disconnect", async () => {
       logger.debug({ userId }, "socket disconnected");
-      if (!isHostMarkedOnline(userId)) return;
-      const stillConnected = io ? (await io.in(`user:${userId}`).fetchSockets()).length > 0 : false;
-      if (!stillConnected) {
+      if (isHostMarkedOnline(userId) && !(await isUserConnected(userId))) {
         setHostOffline(userId);
         broadcastPresence(userId, false);
       }
+
+      // Ending a live broadcast is far more disruptive to active viewers
+      // than the presence flag above (kicks everyone out, not just a status
+      // dot flicker), so recovering from a dropped host connection isn't
+      // instant — env.LIVE_BROADCAST_DISCONNECT_GRACE_MS is how long a
+      // reconnect (page reload, brief network hiccup) has to land before
+      // checkAbandonedBroadcast treats the broadcast as genuinely abandoned.
+      setTimeout(() => {
+        void checkAbandonedBroadcast(userId).catch((err) =>
+          logger.error({ err, userId }, "Auto-end-broadcast-on-disconnect check failed"),
+        );
+      }, env.LIVE_BROADCAST_DISCONNECT_GRACE_MS).unref();
     });
   });
 
   return io;
+}
+
+// A host's live_broadcasts row (live.service.ts's startBroadcast) is only
+// ever cleared by an explicit POST .../end — nothing previously corrected
+// it when their connection just dropped without one, so an abandoned
+// broadcast stayed "live" forever, permanently blocking every future
+// attempt to start a new one ("You already have a live broadcast running")
+// with no way back except an admin's force-end. Exported (not inlined in
+// the disconnect handler above) specifically so a test can call it directly
+// instead of waiting on a real disconnect + the real grace-period timer.
+export async function checkAbandonedBroadcast(hostId: string): Promise<void> {
+  if (await isUserConnected(hostId)) return;
+  const ended = await endActiveBroadcastForHostIfAny(hostId);
+  if (ended) {
+    emitToRoom(liveRoomName(ended.id), "live:ended", { broadcastId: ended.id });
+    logger.warn({ hostId, broadcastId: ended.id }, "Auto-ended a live broadcast — host's connection never reconnected");
+  }
 }
 
 export function broadcastPresence(hostId: string, isOnline: boolean): void {

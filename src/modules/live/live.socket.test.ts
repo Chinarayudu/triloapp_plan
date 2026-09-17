@@ -4,7 +4,7 @@ import request from "supertest";
 import { io as ioClient, Socket } from "socket.io-client";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../../app";
-import { createSocketServer } from "../../realtime/socket";
+import { checkAbandonedBroadcast, createSocketServer } from "../../realtime/socket";
 import { fundUserWallet, registerAndLogin } from "../../test/helpers";
 
 describe("Live broadcasting: room fan-out over socket", () => {
@@ -92,5 +92,90 @@ describe("Live broadcasting: room fan-out over socket", () => {
       .send({ recipientId: host.user.id, giftId: rose.id, context: "live", contextId: broadcastId });
 
     expect((await received).gift.name).toBe("Rose");
+  });
+});
+
+describe("Live broadcasting: auto-ends an abandoned broadcast (BUG_HISTORY.md 2026-09-17)", () => {
+  let hostSocket: Socket | undefined;
+  let viewerSocket: Socket | undefined;
+  let httpServer: ReturnType<typeof createServer> | undefined;
+
+  afterEach(() => {
+    hostSocket?.close();
+    viewerSocket?.close();
+    httpServer?.close();
+  });
+
+  it("ends the broadcast and notifies the room once the host's connection genuinely drops", async () => {
+    const app = createApp();
+    httpServer = createServer(app);
+    createSocketServer(httpServer);
+    await new Promise<void>((resolve) => httpServer!.listen(0, resolve));
+    const port = (httpServer.address() as AddressInfo).port;
+
+    const host = await registerAndLogin(app, "host");
+    const viewer = await registerAndLogin(app, "user");
+
+    const start = await request(app).post("/host/live/broadcasts").set("Authorization", `Bearer ${host.accessToken}`);
+    const broadcastId = start.body.broadcastId;
+
+    hostSocket = await new Promise<Socket>((resolve, reject) => {
+      const s = ioClient(`http://localhost:${port}`, { auth: { token: host.accessToken } });
+      s.on("connect", () => resolve(s));
+      s.on("connect_error", reject);
+    });
+    viewerSocket = await new Promise<Socket>((resolve, reject) => {
+      const s = ioClient(`http://localhost:${port}`, { auth: { token: viewer.accessToken } });
+      s.on("connect", () => resolve(s));
+      s.on("connect_error", reject);
+    });
+    await request(app).post(`/user/live/broadcasts/${broadcastId}/join`).set("Authorization", `Bearer ${viewer.accessToken}`);
+
+    const ended = new Promise<{ broadcastId: string }>((resolve) => viewerSocket!.on("live:ended", resolve));
+
+    // Simulates a crash/closed-tab/network-loss — never calls the real end
+    // endpoint. Calling checkAbandonedBroadcast directly instead of waiting
+    // on the real disconnect + grace-period timer, same "drive it
+    // deterministically" convention as the call reaper's tests.
+    await new Promise<void>((resolve) => {
+      hostSocket!.on("disconnect", () => resolve());
+      hostSocket!.close();
+    });
+    // The client's own "disconnect" fires the instant it closes locally,
+    // but the server needs a moment longer to notice the closed connection
+    // and drop it from the room isUserConnected checks — otherwise
+    // checkAbandonedBroadcast still sees the host as connected.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await checkAbandonedBroadcast(host.user.id);
+
+    expect((await ended).broadcastId).toBe(broadcastId);
+
+    // The original bug: this would 409 "You already have a live broadcast
+    // running" forever, since nothing ever cleared the stale "live" row.
+    const restart = await request(app).post("/host/live/broadcasts").set("Authorization", `Bearer ${host.accessToken}`);
+    expect(restart.status).toBe(201);
+  });
+
+  it("leaves the broadcast alone if the host is still connected", async () => {
+    const app = createApp();
+    httpServer = createServer(app);
+    createSocketServer(httpServer);
+    await new Promise<void>((resolve) => httpServer!.listen(0, resolve));
+    const port = (httpServer.address() as AddressInfo).port;
+
+    const host = await registerAndLogin(app, "host");
+    await request(app).post("/host/live/broadcasts").set("Authorization", `Bearer ${host.accessToken}`);
+
+    hostSocket = await new Promise<Socket>((resolve, reject) => {
+      const s = ioClient(`http://localhost:${port}`, { auth: { token: host.accessToken } });
+      s.on("connect", () => resolve(s));
+      s.on("connect_error", reject);
+    });
+
+    await checkAbandonedBroadcast(host.user.id);
+
+    // Still genuinely live — a second start attempt still correctly 409s.
+    const second = await request(app).post("/host/live/broadcasts").set("Authorization", `Bearer ${host.accessToken}`);
+    expect(second.status).toBe(409);
   });
 });

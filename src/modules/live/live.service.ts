@@ -65,6 +65,21 @@ async function endBroadcastById(broadcastId: string): Promise<LiveBroadcast> {
   return updated;
 }
 
+// Auto-recovery for a host whose connection dropped without cleanly
+// calling POST /live/broadcasts/:id/end (crash, closed tab, network loss,
+// the client bug where a stale deployed bundle fails to even load) — same
+// "a flag set by an explicit action needs an equally-reliable path back
+// when the thing it tracks goes away on its own" fix already applied to
+// presence.store.ts's online flag (realtime/socket.ts's disconnect
+// handler). Without this, a host's own broadcast being permanently stuck
+// "live" blocks every future POST /live/broadcasts (startBroadcast's
+// one-at-a-time check above) with no way back except an admin's force-end.
+export async function endActiveBroadcastForHostIfAny(hostId: string): Promise<LiveBroadcast | undefined> {
+  const broadcast = await getActiveBroadcastForHost(hostId);
+  if (!broadcast) return undefined;
+  return endBroadcastById(broadcast.id);
+}
+
 export async function endBroadcast(broadcastId: string, hostId: string): Promise<LiveBroadcast> {
   const broadcast = await getBroadcastById(broadcastId);
   if (!broadcast) throw new AppError(404, "Broadcast not found");
