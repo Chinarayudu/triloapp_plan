@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "../../db/client";
-import { hostProfiles, payoutMethods, users } from "../../db/schema";
+import { BeautySettings, hostProfiles, payoutMethods, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { generateUploadUrl, getPublicUrl } from "../../lib/s3";
 import { requireAuth, requireRole } from "../../middleware/auth";
@@ -140,6 +140,53 @@ usersRouter.patch(
         .where(eq(hostProfiles.userId, req.user!.sub))
         .returning();
       res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Beauty/filter pipeline lives entirely client-side (in-camera Beauty
+// screen); this just persists and round-trips the one JSON blob it produces,
+// same "save the whole object" shape every time — not a partial merge like
+// PATCH /me/host-profile above. preset.id/filterId are intentionally
+// z.string() rather than z.enum(...): the client's fixed set of presets and
+// filters can grow without a backend change or deploy.
+const beautySettingsSchema = z.object({
+  enabled: z.boolean(),
+  preset: z.object({
+    id: z.string().min(1),
+    intensity: z.number().int().min(0).max(100),
+  }),
+  filterId: z.string().min(1),
+  custom: z.object({
+    exposure: z.number().int().min(-50).max(50),
+    brightness: z.number().int().min(-50).max(50),
+    contrast: z.number().int().min(-50).max(50),
+    saturation: z.number().int().min(-50).max(50),
+    temperature: z.number().int().min(-50).max(50),
+    tint: z.number().int().min(-50).max(50),
+    highlights: z.number().int().min(-50).max(50),
+    shadows: z.number().int().min(-50).max(50),
+    sharpness: z.number().int().min(-50).max(50),
+    vibrance: z.number().int().min(-50).max(50),
+  }),
+}) satisfies z.ZodType<BeautySettings>;
+
+usersRouter.patch(
+  "/me/beauty-settings",
+  requireAuth,
+  requireRole("host"),
+  validateBody(beautySettingsSchema),
+  async (req, res, next) => {
+    try {
+      const beautySettings = req.body as BeautySettings;
+      const [updated] = await db
+        .update(hostProfiles)
+        .set({ beautySettings, updatedAt: new Date() })
+        .where(eq(hostProfiles.userId, req.user!.sub))
+        .returning({ beautySettings: hostProfiles.beautySettings });
+      res.json(updated.beautySettings);
     } catch (err) {
       next(err);
     }

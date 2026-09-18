@@ -1,0 +1,1 @@
+ALTER TABLE "host_profiles" ADD COLUMN "beauty_settings" jsonb;

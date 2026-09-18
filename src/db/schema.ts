@@ -1,6 +1,7 @@
 import {
   boolean,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   text,
@@ -80,6 +81,29 @@ export const users = pgTable("users", {
 // One row per HOST-role user. Presence (online/busy) is Redis-backed at
 // runtime (BACKEND_PLAN.md §4), not stored here — this table is profile
 // data only.
+// One JSON blob per host, saved and returned as-is — the client's camera
+// beauty/filter pipeline owns the shape and all the effect math; the backend
+// just round-trips it. preset.id/filterId are opaque strings on purpose (not
+// enums): the client adds new presets/filters over time without a backend
+// deploy or an allowlist blocking them.
+export interface BeautySettings {
+  enabled: boolean;
+  preset: { id: string; intensity: number };
+  filterId: string;
+  custom: {
+    exposure: number;
+    brightness: number;
+    contrast: number;
+    saturation: number;
+    temperature: number;
+    tint: number;
+    highlights: number;
+    shadows: number;
+    sharpness: number;
+    vibrance: number;
+  };
+}
+
 export const hostProfiles = pgTable("host_profiles", {
   userId: uuid("user_id")
     .primaryKey()
@@ -105,6 +129,9 @@ export const hostProfiles = pgTable("host_profiles", {
   talksAboutTags: text("talks_about_tags").array().notNull().default([]),
   hobbies: text("hobbies").array().notNull().default([]),
   sports: text("sports").array().notNull().default([]),
+  // Null until the host's client saves it the first time (in-camera Beauty
+  // screen, User app design follow-up).
+  beautySettings: jsonb("beauty_settings").$type<BeautySettings>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

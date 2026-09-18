@@ -447,6 +447,40 @@
           }
         },
         {
+          "name": "Update Beauty Settings",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"preset\": {\n    \"id\": \"fine_smooth\",\n    \"intensity\": 40\n  },\n  \"filterId\": \"vintage\",\n  \"custom\": {\n    \"exposure\": 0,\n    \"brightness\": 10,\n    \"contrast\": 5,\n    \"saturation\": 0,\n    \"temperature\": 3,\n    \"tint\": 0,\n    \"highlights\": 0,\n    \"shadows\": 0,\n    \"sharpness\": 0,\n    \"vibrance\": 0\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/host/me/beauty-settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "beauty-settings"
+              ]
+            },
+            "description": "In-camera Beauty screen's save action. Saved and returned as one opaque JSON blob — preset.id/filterId aren't validated against a fixed list server-side, and custom.* are 10 integers from -50 to 50. Also echoed back as hostProfile.beautySettings on GET /host/me."
+          }
+        },
+        {
           "name": "1. Get KYC Upload URL",
           "request": {
             "method": "POST",

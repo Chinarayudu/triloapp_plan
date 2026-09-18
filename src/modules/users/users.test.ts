@@ -46,6 +46,59 @@ describe("Profile endpoints", () => {
     expect(res.body.bio).toBe("Hi there");
     expect(res.body.ratePerMinutePaise).toBe(5000);
   });
+
+  const beautySettings = {
+    enabled: true,
+    preset: { id: "fine_smooth", intensity: 40 },
+    filterId: "vintage",
+    custom: {
+      exposure: 0,
+      brightness: 10,
+      contrast: 5,
+      saturation: 0,
+      temperature: 3,
+      tint: 0,
+      highlights: 0,
+      shadows: 0,
+      sharpness: 0,
+      vibrance: 0,
+    },
+  };
+
+  it("saves and round-trips beauty settings for a HOST role", async () => {
+    const app = createApp();
+    const { accessToken } = await registerAndLogin(app, "host");
+
+    const patchRes = await request(app)
+      .patch("/host/me/beauty-settings")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(beautySettings);
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.body).toEqual(beautySettings);
+
+    const meRes = await request(app).get("/host/me").set("Authorization", `Bearer ${accessToken}`);
+    expect(meRes.body.hostProfile.beautySettings).toEqual(beautySettings);
+  });
+
+  it("rejects beauty-settings updates from a USER role", async () => {
+    const app = createApp();
+    const { accessToken } = await registerAndLogin(app, "user");
+    const res = await request(app)
+      .patch("/user/me/beauty-settings")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send(beautySettings);
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects beauty-settings updates with an out-of-range custom value", async () => {
+    const app = createApp();
+    const { accessToken } = await registerAndLogin(app, "host");
+    const res = await request(app)
+      .patch("/host/me/beauty-settings")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ ...beautySettings, custom: { ...beautySettings.custom, exposure: 51 } });
+    expect(res.status).toBe(400);
+  });
 });
 
 // KYC document upload/view tests live in kyc.test.ts — they exercise a
