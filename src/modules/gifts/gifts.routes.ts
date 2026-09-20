@@ -107,3 +107,34 @@ giftsRouter.post(
     }
   },
 );
+
+const declineGiftRequestSchema = z.object({
+  hostId: z.string().uuid(),
+  // Nothing server-side tracks an in-flight gift request (POST /gifts/request
+  // above is a stateless prompt, no DB row) — giftId is only ever what the
+  // caller passes through, for the host's own logging/matching, not
+  // validated against anything here.
+  giftId: z.string().uuid().optional(),
+});
+
+giftsRouter.post(
+  "/gifts/request/decline",
+  requireAuth,
+  requireRole("user"),
+  validateBody(declineGiftRequestSchema),
+  async (req, res, next) => {
+    try {
+      const { hostId, giftId } = req.body as z.infer<typeof declineGiftRequestSchema>;
+      const host = await getUserById(hostId);
+      if (!host || host.role !== "host" || host.status !== "active") {
+        throw new AppError(400, "Target must be an active host");
+      }
+
+      emitToUser(hostId, "gift:requestDeclined", { userId: req.user!.sub, giftId: giftId ?? null });
+
+      res.json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+);

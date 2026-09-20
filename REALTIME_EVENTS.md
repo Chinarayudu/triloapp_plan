@@ -57,6 +57,7 @@ server gives no signal that a refresh is due.
 | `live:ended` | `POST /live/broadcasts/:id/end`, or admin force-end | the broadcast room | `{ broadcastId }` |
 | `gift:received` | `POST /gifts/send` | the recipient host, plus the broadcast room too when `context: "live"` | `{ giftTransactionId, senderId, gift: { id, name, iconUrl }, beansCredited }` |
 | `gift:requested` | `POST /gifts/request` | the requested host | `{ hostId, suggestedGiftId }` |
+| `gift:requestDeclined` | `POST /gifts/request/decline` | the declined host | `{ userId, giftId }` (`giftId` is `null` unless the client passed one) |
 | `kyc:decision` | `POST /admin/kyc/:userId/decision` | the user whose KYC was decided | `{ status, reason }` (`status` is `"approved"` or `"rejected"`; `reason` is `null` for approvals) |
 | `notification:new` | a gift received / withdrawal status change / missed call inserts a row into `notifications` | the notified user | the full inserted notification row: `{ id, userId, type, title, body, read, createdAt }` |
 | `withdrawal:status` | a withdrawal request changes status (admin decision or payout resolution) | the requesting host | `{ withdrawalId, status }` |

@@ -134,4 +134,41 @@ describe("Gifts: gift requests", () => {
       .send({ userId: host2.user.id });
     expect(res.status).toBe(400);
   });
+
+  it("lets a user decline a host's gift request", async () => {
+    const app = createApp();
+    const host = await registerAndLogin(app, "host");
+    const user = await registerAndLogin(app, "user");
+
+    const res = await request(app)
+      .post("/user/gifts/request/decline")
+      .set("Authorization", `Bearer ${user.accessToken}`)
+      .send({ hostId: host.user.id, giftId: "9e0d3f0a-3f0a-4a1a-9a1a-0f0a3f0a3f0a" });
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+  });
+
+  it("rejects a host trying to decline a gift request", async () => {
+    const app = createApp();
+    const host1 = await registerAndLogin(app, "host");
+    const host2 = await registerAndLogin(app, "host");
+
+    const res = await request(app)
+      .post("/host/gifts/request/decline")
+      .set("Authorization", `Bearer ${host1.accessToken}`)
+      .send({ hostId: host2.user.id });
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects declining against a target that isn't an active host", async () => {
+    const app = createApp();
+    const user1 = await registerAndLogin(app, "user");
+    const user2 = await registerAndLogin(app, "user");
+
+    const res = await request(app)
+      .post("/user/gifts/request/decline")
+      .set("Authorization", `Bearer ${user1.accessToken}`)
+      .send({ hostId: user2.user.id });
+    expect(res.status).toBe(400);
+  });
 });

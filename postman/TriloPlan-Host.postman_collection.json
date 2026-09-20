@@ -1374,6 +1374,41 @@
           }
         },
         {
+          "name": "2b. (User) Decline Gift Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hostId\": \"{{hostId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/host/gifts/request/decline",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "gifts",
+                "request",
+                "decline"
+              ]
+            },
+            "description": "\"Not now\" button — mirror of Request Gift above. Pushes gift:requestDeclined to the host being declined (a user token calling this, same per-app-routing-not-per-role pattern as Send Gift below)."
+          }
+        },
+        {
           "name": "3. (User) Send Gift to This Host",
           "request": {
             "method": "POST",

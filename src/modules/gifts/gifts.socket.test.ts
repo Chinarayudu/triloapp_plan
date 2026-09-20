@@ -48,6 +48,36 @@ describe("Gifts: live notifications", () => {
     expect((await received).gift.name).toBe("Rose");
   });
 
+  it("delivers gift:requestDeclined to a connected host when a user declines", async () => {
+    const app = createApp();
+    httpServer = createServer(app);
+    createSocketServer(httpServer);
+    await new Promise<void>((resolve) => httpServer!.listen(0, resolve));
+    const port = (httpServer.address() as AddressInfo).port;
+
+    const user = await registerAndLogin(app, "user");
+    const host = await registerAndLogin(app, "host");
+
+    clientSocket = ioClient(`http://localhost:${port}`, { auth: { token: host.accessToken } });
+    await new Promise<void>((resolve, reject) => {
+      clientSocket!.on("connect", resolve);
+      clientSocket!.on("connect_error", reject);
+    });
+
+    const declined = new Promise<{ userId: string; giftId: string | null }>((resolve) =>
+      clientSocket!.on("gift:requestDeclined", resolve),
+    );
+
+    await request(app)
+      .post("/user/gifts/request/decline")
+      .set("Authorization", `Bearer ${user.accessToken}`)
+      .send({ hostId: host.user.id });
+
+    const payload = await declined;
+    expect(payload.userId).toBe(user.user.id);
+    expect(payload.giftId).toBeNull();
+  });
+
   it("falls back to a push notification when the requested user has no live connection", async () => {
     const app = createApp();
     const pushSpy = vi.spyOn(pushLib, "sendPushNotification").mockResolvedValue();
