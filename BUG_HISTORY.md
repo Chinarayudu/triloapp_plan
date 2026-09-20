@@ -20,6 +20,15 @@ Copy this for each new entry, filled in, added to the top of the log below.
 
 ## Log
 
+### [2026-09-20] KYC selfie video upload rejected — "Invalid option: expected one of \"image/jpeg\"|\"image/png\"|\"application/pdf\""
+
+**Symptom**: `POST /me/kyc/upload-url` returns `400` with that Zod `invalid_enum_value` message when the Host app's selfie liveness step tries to get a presigned upload URL, sending `contentType: "video/webm;codecs=vp9,opus"`.
+**Root cause**: the endpoint's content-type allowlist only ever covered still images/PDF. Separately, the Host app's selfie step now records a short liveness video via the browser's `MediaRecorder`, which reports `contentType` as the base MIME type plus a `;codecs=...` parameter that varies by browser/OS (`vp9,opus` on Chrome/Android, `vp8,opus` on Firefox, etc.) — so even adding `"video/webm"` to a `z.enum` exact-match wouldn't reliably work, since the codec suffix isn't fixed.
+**Affected files**: `src/modules/users/users.routes.ts` (`EXTENSION_BY_CONTENT_TYPE`, `uploadUrlSchema`, `POST /me/kyc/upload-url`), `src/modules/users/kyc.test.ts` (new regression test).
+**Fix**: added `"video/webm": "webm"` to the allowlist, and changed validation/extension-lookup to match on the base type (the part before the first `;`) rather than the full string — any codec combination for `video/webm` now passes. The full original string (codecs included) is still what's sent to S3 as the object's `Content-Type`, since that's a legal HTTP media-type parameter.
+**Call sites checked**: `GALLERY_EXTENSION_BY_CONTENT_TYPE` (gallery upload route) — separate map, untouched. `POST /me/kyc` (submit step) — takes `documentType` + `key` only, no content-type validation, so no schema/enum change needed there for "selfie" to mean a video artifact. Existing `application/pdf` tests (`kyc.test.ts`, `withdrawal.test.ts`) and the `text/plain` → `400` rejection test all still pass unchanged. Full suite (137/137, including the new codec-qualified-webm test) and `tsc --noEmit` pass.
+**Known follow-up, not yet needed**: `video/mp4` isn't allowlisted — Safari/iOS's `MediaRecorder` doesn't produce webm, so an iOS host hitting this same step would 400 the same way. Same fix shape if/when that's reported.
+
 ### [2026-09-17] Host permanently can't start a new live broadcast — "You already have a live broadcast running"
 
 **Symptom**: `POST /live/broadcasts` returns `409 "You already have a live broadcast running"` even though the host isn't actually broadcasting anything right now — every retry fails the same way, indefinitely.

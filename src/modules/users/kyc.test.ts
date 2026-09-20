@@ -97,6 +97,18 @@ describe("KYC document upload", () => {
     expect(res.status).toBe(400);
   });
 
+  it("accepts a codec-qualified video/webm content type (selfie liveness capture)", async () => {
+    const app = createApp();
+    const { accessToken } = await registerAndLogin(app);
+    const res = await request(app)
+      .post("/user/me/kyc/upload-url")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ contentType: "video/webm;codecs=vp9,opus" });
+    expect(res.status).toBe(200);
+    expect(res.body.key).toMatch(/\.webm$/);
+    keysToCleanUp.push(res.body.key);
+  });
+
   it("rejects submitting a document key that doesn't belong to the caller", async () => {
     const app = createApp();
     const { accessToken } = await registerAndLogin(app);

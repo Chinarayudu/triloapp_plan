@@ -279,17 +279,33 @@ const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
   "application/pdf": "pdf",
+  // Selfie liveness capture (Host app) records via the browser's
+  // MediaRecorder, which reports contentType as this base type plus a
+  // codecs= parameter that varies by browser/OS (e.g. "codecs=vp9,opus" on
+  // Chrome/Android, "codecs=vp8,opus" on Firefox) — matched below on the
+  // part before the first ";", not the full string, since we don't care
+  // which codec combination was used, only that it's still webm.
+  "video/webm": "webm",
 };
 
+const KYC_CONTENT_TYPES = Object.keys(EXTENSION_BY_CONTENT_TYPE);
+
 const uploadUrlSchema = z.object({
-  contentType: z.enum(Object.keys(EXTENSION_BY_CONTENT_TYPE) as [string, ...string[]]),
+  contentType: z.string().refine((value) => value.split(";")[0].trim() in EXTENSION_BY_CONTENT_TYPE, {
+    message: `Invalid option: expected one of ${KYC_CONTENT_TYPES.map((t) => `"${t}"`).join("|")}`,
+  }),
 });
 
 usersRouter.post("/me/kyc/upload-url", requireAuth, validateBody(uploadUrlSchema), async (req, res, next) => {
   try {
     const { contentType } = req.body as z.infer<typeof uploadUrlSchema>;
-    const extension = EXTENSION_BY_CONTENT_TYPE[contentType];
+    const baseType = contentType.split(";")[0].trim();
+    const extension = EXTENSION_BY_CONTENT_TYPE[baseType];
     const key = `kyc/${req.user!.sub}/${randomUUID()}.${extension}`;
+    // The full contentType (codecs included) is still what's sent to S3 as
+    // the object's Content-Type — that's a legal HTTP media-type parameter,
+    // no reason to throw the codec info away just because validation above
+    // only needed the base type.
     const uploadUrl = await generateUploadUrl(key, contentType);
     res.json({ uploadUrl, key });
   } catch (err) {
