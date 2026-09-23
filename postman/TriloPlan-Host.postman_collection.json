@@ -88,6 +88,16 @@
       "type": "string"
     },
     {
+      "key": "avatarUploadUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "avatarPublicUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
       "key": "galleryItemId",
       "value": "",
       "type": "string"
@@ -380,6 +390,82 @@
           }
         },
         {
+          "name": "1. Get Avatar Upload URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contentType\": \"image/jpeg\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/host/me/avatar/upload-url",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "avatar",
+                "upload-url"
+              ]
+            },
+            "description": "Onboarding \"Set up profile\" step and Edit Profile screen's camera button. Unlike KYC's presigned GET, the resulting `url` is public — hand it straight to Update My Profile below, no separate confirm step."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"avatarUploadUrl\", jsonData.uploadUrl);",
+                  "pm.collectionVariables.set(\"avatarPublicUrl\", jsonData.url);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Upload Avatar to S3",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/jpeg",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "This is placeholder file content for testing the upload flow."
+            },
+            "url": {
+              "raw": "{{avatarUploadUrl}}",
+              "host": [
+                "{{avatarUploadUrl}}"
+              ]
+            },
+            "description": "Goes straight to S3 with the presigned URL from step 1 — no Authorization header needed."
+          }
+        },
+        {
           "name": "Update My Profile",
           "request": {
             "method": "PATCH",
@@ -397,7 +483,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Ayesha\",\n  \"email\": \"host@mail.com\"\n}"
+              "raw": "{\n  \"name\": \"Ayesha\",\n  \"email\": \"host@mail.com\",\n  \"avatarUrl\": \"{{avatarPublicUrl}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/host/me",
@@ -409,7 +495,7 @@
                 "me"
               ]
             },
-            "description": "Edit profile screen's name/email fields."
+            "description": "Edit profile screen's name/email/photo fields — avatarUrl comes from step 2 above (the onboarding \"Set up profile\" screen calls these in the same order: get upload URL, PUT to S3, then this)."
           }
         },
         {
@@ -586,7 +672,8 @@
                 "me",
                 "kyc"
               ]
-            }
+            },
+            "description": "documentType also accepts \"id_back\", \"selfie\", \"address_proof\", and \"audition_video\" (the \"Live audition video\" onboarding step — uploaded via the same step 1/2 presigned flow above with a video/webm contentType, then its key included here alongside the id/selfie documents)."
           }
         },
         {

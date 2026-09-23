@@ -48,6 +48,11 @@ export const users = pgTable("users", {
   // forced at signup.
   username: text("username").unique(),
   email: text("email"),
+  // Public profile photo (User/Host Edit Profile screens) — a public S3 URL,
+  // same "presign an upload, hand back the final url" pattern as
+  // hostProfiles gallery items. Null until set; every screen must fall back
+  // to a generated placeholder (initials/gradient) when it's absent.
+  avatarUrl: text("avatar_url"),
   dob: text("dob"), // ISO date string; verified DOB comes from KYC review (Phase 9), not this field alone
   // Verified two ways depending on role (User app design follow-up):
   // Hosts go through admin-reviewed KYC (decideKyc, admin.service.ts) —
@@ -189,6 +194,11 @@ export const kycDocumentTypeEnum = pgEnum("kyc_document_type", [
   "id_back",
   "selfie",
   "address_proof",
+  // Host app's "Live audition video" onboarding step (recorded via
+  // MediaRecorder, uploaded through the same presigned-KYC-upload flow as
+  // the other document types) — attached to the submission like any other
+  // document so admin's KYC review can see it.
+  "audition_video",
 ]);
 
 export const kycSubmissions = pgTable("kyc_submissions", {

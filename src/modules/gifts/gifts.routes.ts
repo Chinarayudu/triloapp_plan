@@ -131,6 +131,9 @@ giftsRouter.post(
       }
 
       emitToUser(hostId, "gift:requestDeclined", { userId: req.user!.sub, giftId: giftId ?? null });
+      if (!(await isUserConnected(hostId))) {
+        void sendPushNotification(hostId, "Gift request declined", "The user declined your gift request");
+      }
 
       res.json({ success: true });
     } catch (err) {

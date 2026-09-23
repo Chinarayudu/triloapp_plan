@@ -40,6 +40,7 @@ usersRouter.get("/me", requireAuth, async (req, res, next) => {
       username: user.username,
       name: user.name,
       email: user.email,
+      avatarUrl: user.avatarUrl,
       dob: user.dob,
       ageVerified: user.ageVerified,
       languages: user.languages,
@@ -62,6 +63,7 @@ const updateMeSchema = z.object({
     .regex(/^[a-zA-Z0-9_]+$/, "Username can only contain letters, numbers, and underscores")
     .optional(),
   email: z.string().email().optional(),
+  avatarUrl: z.string().url().optional(),
   dob: z.string().date().optional(),
   languages: z.array(z.string().min(1)).max(20).optional(),
 });
@@ -85,6 +87,37 @@ usersRouter.patch("/me", requireAuth, validateBody(updateMeSchema), async (req, 
     next(err);
   }
 });
+
+// Profile photo (User/Host Edit Profile screens, and Host onboarding's
+// "Set up profile" step) — same presign-then-PATCH pattern as the gallery
+// upload flow below, except the result is a single column on `users`
+// (avatarUrl) rather than an appended list, and there's no role restriction
+// since both Users and Hosts have a profile photo.
+const AVATAR_EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+};
+
+const avatarUploadUrlSchema = z.object({
+  contentType: z.enum(Object.keys(AVATAR_EXTENSION_BY_CONTENT_TYPE) as [string, ...string[]]),
+});
+
+usersRouter.post(
+  "/me/avatar/upload-url",
+  requireAuth,
+  validateBody(avatarUploadUrlSchema),
+  async (req, res, next) => {
+    try {
+      const { contentType } = req.body as z.infer<typeof avatarUploadUrlSchema>;
+      const extension = AVATAR_EXTENSION_BY_CONTENT_TYPE[contentType];
+      const key = `avatar/${req.user!.sub}/${randomUUID()}.${extension}`;
+      const uploadUrl = await generateUploadUrl(key, contentType);
+      res.json({ uploadUrl, key, url: getPublicUrl(key) });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // Self-declared age verification for Users (User app design follow-up) —
 // a deliberate deviation from BR-ACC-04's "distinct from a self-declared
@@ -316,19 +349,19 @@ usersRouter.post("/me/kyc/upload-url", requireAuth, validateBody(uploadUrlSchema
 // Every key must belong to the caller (kyc/{their own user id}/...) —
 // without this check, one account could submit KYC using a document key it
 // never actually uploaded, just by guessing/copying another user's key.
-// 1-4 documents, each a distinct type (front/back/selfie/address proof) —
-// a real submission history now, not a single overwritten column; see
-// kyc.service.ts's createSubmission.
+// 1-5 documents, each a distinct type (front/back/selfie/address
+// proof/audition video) — a real submission history now, not a single
+// overwritten column; see kyc.service.ts's createSubmission.
 const kycSchema = z.object({
   documents: z
     .array(
       z.object({
-        documentType: z.enum(["id_front", "id_back", "selfie", "address_proof"]),
+        documentType: z.enum(["id_front", "id_back", "selfie", "address_proof", "audition_video"]),
         key: z.string().min(1),
       }),
     )
     .min(1)
-    .max(4)
+    .max(5)
     .refine(
       (docs) => new Set(docs.map((d) => d.documentType)).size === docs.length,
       "Each document type can only be submitted once per attempt",

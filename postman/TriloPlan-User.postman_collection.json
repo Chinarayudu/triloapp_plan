@@ -36,6 +36,16 @@
       "type": "string"
     },
     {
+      "key": "avatarUploadUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "avatarPublicUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
       "key": "userId",
       "value": "",
       "type": "string"
@@ -251,6 +261,82 @@
           }
         },
         {
+          "name": "Get Avatar Upload URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contentType\": \"image/jpeg\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/me/avatar/upload-url",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "avatar",
+                "upload-url"
+              ]
+            },
+            "description": "Returns a public `url` (unlike KYC's presigned GET) — hand it straight to Update My Profile below, no separate confirm step."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"avatarUploadUrl\", jsonData.uploadUrl);",
+                  "pm.collectionVariables.set(\"avatarPublicUrl\", jsonData.url);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Avatar to S3",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/jpeg",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "This is placeholder file content for testing the upload flow."
+            },
+            "url": {
+              "raw": "{{avatarUploadUrl}}",
+              "host": [
+                "{{avatarUploadUrl}}"
+              ]
+            },
+            "description": "Goes straight to S3 with the presigned URL from the previous step — no Authorization header needed."
+          }
+        },
+        {
           "name": "Update My Profile — Set Profile Photo/Name/DOB (Step 3 of 4)",
           "request": {
             "method": "PATCH",
@@ -268,7 +354,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Arjun Sharma\",\n  \"username\": \"arjun\",\n  \"email\": \"arjun.m@email.com\",\n  \"dob\": \"1996-03-12\",\n  \"languages\": [\"Hindi\", \"English\"]\n}"
+              "raw": "{\n  \"name\": \"Arjun Sharma\",\n  \"username\": \"arjun\",\n  \"email\": \"arjun.m@email.com\",\n  \"avatarUrl\": \"{{avatarPublicUrl}}\",\n  \"dob\": \"1996-03-12\",\n  \"languages\": [\"Hindi\", \"English\"]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/user/me",
@@ -280,7 +366,7 @@
                 "me"
               ]
             },
-            "description": "Edit Profile screen's fields. DOB is required before Verify Age below can succeed."
+            "description": "Edit Profile screen's fields — avatarUrl comes from the Get/Upload Avatar steps above. DOB is required before Verify Age below can succeed."
           }
         },
         {

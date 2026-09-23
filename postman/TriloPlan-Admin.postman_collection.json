@@ -116,6 +116,16 @@
       "type": "string"
     },
     {
+      "key": "auditionVideoUploadUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "auditionVideoKey",
+      "value": "",
+      "type": "string"
+    },
+    {
       "key": "withdrawalId",
       "value": "",
       "type": "string"
@@ -546,6 +556,80 @@
           }
         },
         {
+          "name": "Get Audition Video Upload URL (Host)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contentType\": \"video/webm\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/host/me/kyc/upload-url",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "kyc",
+                "upload-url"
+              ]
+            },
+            "description": "Same presigned-KYC-upload endpoint as step 3, for the Host app's \"Live audition video\" onboarding step (documentType \"audition_video\" below) — the KYC review screen's video document."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"auditionVideoUploadUrl\", jsonData.uploadUrl);",
+                  "pm.collectionVariables.set(\"auditionVideoKey\", jsonData.key);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload Audition Video to S3",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "video/webm",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "This is placeholder file content for testing the upload flow."
+            },
+            "url": {
+              "raw": "{{auditionVideoUploadUrl}}",
+              "host": [
+                "{{auditionVideoUploadUrl}}"
+              ]
+            }
+          }
+        },
+        {
           "name": "5. Submit KYC Document (Host)",
           "request": {
             "method": "POST",
@@ -563,7 +647,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"documents\": [\n    { \"documentType\": \"id_front\", \"key\": \"{{kycDocumentKey}}\" }\n  ]\n}"
+              "raw": "{\n  \"documents\": [\n    { \"documentType\": \"id_front\", \"key\": \"{{kycDocumentKey}}\" },\n    { \"documentType\": \"audition_video\", \"key\": \"{{auditionVideoKey}}\" }\n  ]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/host/me/kyc",
@@ -575,7 +659,8 @@
                 "me",
                 "kyc"
               ]
-            }
+            },
+            "description": "Includes the audition video alongside the id document so step \"2. Get KYC Submission For Review\" below has a video document to exercise the admin viewer's video branch, not just the PDF/image branches."
           }
         },
         {
@@ -839,7 +924,7 @@
                 "{{hostId}}"
               ]
             },
-            "description": "\"Submitted documents\" review screen — every document on the latest pending attempt with a fresh 5-minute presigned view URL."
+            "description": "\"Submitted documents\" review screen — every document on the latest pending attempt with a fresh 5-minute presigned view URL. documentType \"audition_video\" (the Live audition video step) should render as a video player, not an image, in the admin UI."
           }
         },
         {

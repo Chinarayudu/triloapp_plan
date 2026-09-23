@@ -93,4 +93,20 @@ describe("Gifts: live notifications", () => {
 
     expect(pushSpy).toHaveBeenCalledWith(user.user.id, expect.any(String), expect.any(String));
   });
+
+  it("falls back to a push notification when the declined host has no live connection", async () => {
+    const app = createApp();
+    const pushSpy = vi.spyOn(pushLib, "sendPushNotification").mockResolvedValue();
+
+    const host = await registerAndLogin(app, "host");
+    const user = await registerAndLogin(app, "user");
+    // No socket server attached to this app instance at all — isUserConnected() reports false.
+
+    await request(app)
+      .post("/user/gifts/request/decline")
+      .set("Authorization", `Bearer ${user.accessToken}`)
+      .send({ hostId: host.user.id });
+
+    expect(pushSpy).toHaveBeenCalledWith(host.user.id, expect.any(String), expect.any(String));
+  });
 });
