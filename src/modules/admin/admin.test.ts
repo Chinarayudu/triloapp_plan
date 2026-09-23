@@ -1,6 +1,9 @@
+import { eq } from "drizzle-orm";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../app";
+import { db } from "../../db/client";
+import { users } from "../../db/schema";
 import { fundUserWallet, randomPhone, registerAndLogin, registerAndLoginAdmin } from "../../test/helpers";
 
 // Submits KYC without a real S3 round trip — /me/kyc only validates each
@@ -70,6 +73,25 @@ describe("Admin: KYC approval queue", () => {
     const user = await registerAndLogin(app, "user");
     const res = await request(app).get("/admin/kyc/pending").set("Authorization", `Bearer ${user.accessToken}`);
     expect(res.status).toBe(403);
+  });
+
+  // A JWT stays valid for its full TTL even if the admin row behind it is
+  // deleted in the meantime — this used to crash with a raw Postgres FK
+  // violation (reviewed_by_admin_id/audit_logs.admin_id referencing a
+  // nonexistent user), surfaced as an unhandled 500 (permissions.ts).
+  it("returns a clean 401, not a 500, when the admin behind a still-valid token no longer exists", async () => {
+    const app = createApp();
+    const host = await registerAndLogin(app, "host");
+    await submitFakeKyc(app, host.accessToken, host.user.id);
+
+    const admin = await registerAndLoginAdmin();
+    await db.delete(users).where(eq(users.id, admin.user.id));
+
+    const res = await request(app)
+      .post(`/admin/kyc/${host.user.id}/decision`)
+      .set("Authorization", `Bearer ${admin.accessToken}`)
+      .send({ decision: "approve" });
+    expect(res.status).toBe(401);
   });
 });
 

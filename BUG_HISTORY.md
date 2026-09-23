@@ -20,6 +20,14 @@ Copy this for each new entry, filled in, added to the top of the log below.
 
 ## Log
 
+### [2026-09-23] Admin KYC decision (and every other `/admin/*` action) crashes with a raw 500 when the admin's own account no longer exists
+
+**Symptom**: `POST /admin/kyc/:userId/decision` (and, by the same code path, any `requireAdminPermission`-gated endpoint) returns `{"error":"Internal server error"}` even though the admin's JWT is still valid (unexpired) and the request body/target are otherwise fine.
+**Root cause**: `requireAdminPermission` (`src/modules/admin/permissions.ts`) trusted a `role: "admin"` JWT outright — `if (req.user.role === "admin") { next(); return; }` — with no DB existence check, unlike the `sub_admin` branch just below it, which already looks the admin up. Downstream, `decideKyc` → `decideSubmission` writes that admin id straight into `kyc_submissions.reviewed_by_admin_id` (FK to `users.id`), and `writeAuditLog` does the same into `audit_logs.admin_id` (`NOT NULL` FK). If the admin row is gone — account deleted, or (as reproduced here) a full DB wipe — while their token is still within its TTL, the FK-constrained write throws a raw Postgres foreign-key-violation error, which isn't an `AppError`, so it falls through to the generic 500 handler instead of a clean session error. Every endpoint behind `requireAdminPermission` was equally exposed, not just this one route.
+**Affected files**: `src/modules/admin/permissions.ts` (existence lookup now runs for `admin` too, before the role branch; returns `401` "Your session is no longer valid — please log in again" if the row is gone), `src/modules/admin/admin.test.ts` (new regression test).
+**Call sites checked**: `requireAdminPermission` gates every business endpoint in `admin.routes.ts` (KYC, withdrawals, moderation, config, gifts, users/hosts rosters, live monitoring, broadcast messages) — all go through the same middleware, so the fix applies uniformly; grepped for any other caller that might rely on the old "skip the DB check for full admin" behavior and found none. Full suite (137/139 — the 2 failures are pre-existing unrelated timeout flakiness, confirmed via `git stash` earlier this session) and `tsc --noEmit` pass.
+**Reproduction used to confirm root cause**: seeded a fresh admin, logged in for a valid token, confirmed the same decision call succeeds normally (200) with that token — isolating the crash to specifically "valid token, admin row missing," not the target user or the KYC data itself.
+
 ### [2026-09-23] Host never notified when a user declines their gift request
 
 **Symptom**: A host sends a gift request (`POST /gifts/request`); when the user declines (`POST /gifts/request/decline`), the host sees nothing — no toast, no push notification — if their app isn't actively connected via socket at that exact moment. Even when connected, nothing was shown either.
