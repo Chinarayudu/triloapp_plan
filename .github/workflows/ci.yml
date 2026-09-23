@@ -9,6 +9,28 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    # Own, ephemeral database per run — CI previously ran tests against
+    # secrets.DATABASE_URL, which (like local dev before today) turned out
+    # to be the same shared Neon DB the deployed Render backend and its
+    # admin/host apps read from. Every CI run was leaving fixture users/
+    # KYC submissions/gifts in that live database. TECH_STACK.md §9 calls
+    # for "a dedicated Neon branch as the test database" — this uses a
+    # disposable Postgres service container instead, same isolation
+    # requirement, no Neon branch/secret to provision or rotate.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: triloplan_ci
+          POSTGRES_PASSWORD: triloplan_ci
+          POSTGRES_DB: triloplan_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -20,6 +42,11 @@ jobs:
       - run: npm ci
 
       - run: npm run typecheck
+
+      - name: Run migrations against the CI Postgres service
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: postgresql://triloplan_ci:triloplan_ci@localhost:5432/triloplan_ci
 
       # Stands in for real AWS S3 so kyc.test.ts/withdrawal.test.ts's real
       # upload/download round trip can actually run here, not just locally
@@ -45,7 +72,7 @@ jobs:
         env:
           NODE_ENV: test
           PORT: 4000
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: postgresql://triloplan_ci:triloplan_ci@localhost:5432/triloplan_ci
           # JWT_SECRET was missing entirely before — env.ts requires it
           # with no default, so this job could never actually boot the
           # app to run any test. Fixed as part of the MinIO change since

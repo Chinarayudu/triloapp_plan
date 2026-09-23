@@ -20,6 +20,15 @@ Copy this for each new entry, filled in, added to the top of the log below.
 
 ## Log
 
+### [2026-09-23] Fake/unreachable KYC documents (and other test fixtures) showing up in the real admin app — tests and CI ran against the shared dev DB
+
+**Symptom**: A KYC submission viewed in the deployed admin app shows documents that 403 when opened, even on a freshly-fetched presigned URL (rules out expiry). Object keys look like `kyc/{id}/front.pdf`, `kyc/{id}/selfie.pdf`.
+**Root cause**: `npm test` (`vitest.config.ts`) and CI (`.github/workflows/ci.yml`) both read `DATABASE_URL` from the same place local dev and the deployed Render backend use — there was never a separate test database, despite `tech-stack/TECH_STACK.md` §9 documenting "a dedicated Neon branch as the test database" as the intended design. `admin.test.ts`'s `submitFakeKyc()` helper (and everything like it across the suite) writes real rows with fabricated S3 keys that were never actually uploaded — its own comment says as much: "Submits KYC without a real S3 round trip... fake keys are enough." Every local test run and every CI run left this kind of fixture data in the live shared DB.
+**Affected files**: `vitest.config.ts` (`DATABASE_URL` now points at a local Postgres container by default, `process.env.DATABASE_URL ?? "..."` so CI can still override it), `package.json` (`db:migrate:test`, `db:seed:test`), `.github/workflows/ci.yml` (own ephemeral `postgres:16-alpine` service container + migration step, replacing `secrets.DATABASE_URL`), `.env.example` (clarifying note).
+**Fix**: local Postgres via Docker (`docker run -d --name triloplan-test-db -p 5433:5432 -e POSTGRES_USER=triloplan_test -e POSTGRES_PASSWORD=triloplan_test -e POSTGRES_DB=triloplan_test postgres:16-alpine`, then `npm run db:migrate:test` + `npm run db:seed:test` once) for local runs; a `services:` Postgres container for CI. Neither touches the shared Neon DB anymore.
+**Call sites checked**: confirmed via direct query that the shared Neon DB's `users` table stayed at 0 rows after a full local `npm test` run. Full suite (139/139) now runs in ~17–19s against local Postgres, down from 250s+ against remote Neon — and the two previously-flaky timeout failures (admin dashboard, fraud collusion — both confirmed pre-existing via `git stash` earlier this session) now pass reliably every time, confirming they were network-latency flakiness against Neon, not real bugs.
+**Cleanup needed**: the shared Neon DB was truncated (again) as part of this fix to remove the accumulated fixture pollution — re-seed (`db:seed`, `db:seed-admin`) before using it again.
+
 ### [2026-09-23] Admin KYC decision (and every other `/admin/*` action) crashes with a raw 500 when the admin's own account no longer exists
 
 **Symptom**: `POST /admin/kyc/:userId/decision` (and, by the same code path, any `requireAdminPermission`-gated endpoint) returns `{"error":"Internal server error"}` even though the admin's JWT is still valid (unexpired) and the request body/target are otherwise fine.

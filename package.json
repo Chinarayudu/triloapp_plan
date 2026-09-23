@@ -10,7 +10,9 @@
     "test": "cross-env NODE_ENV=test vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:test": "cross-env DATABASE_URL=postgresql://triloplan_test:triloplan_test@localhost:5433/triloplan_test drizzle-kit migrate",
     "db:seed": "tsx src/db/seed.ts",
+    "db:seed:test": "cross-env DATABASE_URL=postgresql://triloplan_test:triloplan_test@localhost:5433/triloplan_test tsx src/db/seed.ts",
     "db:seed-admin": "tsx src/db/seedAdmin.ts",
     "db:backfill-wallets": "tsx src/db/backfillWallets.ts"
   },
