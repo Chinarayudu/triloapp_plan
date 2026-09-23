@@ -20,7 +20,12 @@ Copy this for each new entry, filled in, added to the top of the log below.
 
 ## Log
 
-### [2026-09-23] Fake/unreachable KYC documents (and other test fixtures) showing up in the real admin app — tests and CI ran against the shared dev DB
+### [2026-09-23] Admin can't see or open a host's gallery photos/videos — Gallery tab never rendered the actual media
+
+**Symptom**: Admin → Hosts → a host → Gallery tab shows tiles with the literal placeholder text "Photo thumbnail"/"Video thumbnail" instead of the actual image/video, and there's no way to open the file at all.
+**Root cause**: `Gallery` (`dateingappadminpage/src/pages/Hosts.tsx`) maps each gallery item to `{ id, kind, duration }` only — it never reads the `url` field the API already returns (`GET /admin/hosts/:id/gallery` → `{ items: [{ id, hostId, mediaType, url, durationSeconds, createdAt }] }`). The tile always rendered the static fallback text, unconditionally, with no `<img>`/`<video>` and no link. Checked and ruled out the already-logged 2026-09-21 gallery/S3-AccessDenied entry first — a live fetch of this host's actual gallery `url` returned `200 OK` directly, so that bucket-policy issue is no longer in play here; this was a separate, plain "never wired up" gap.
+**Affected files**: `dateingappadminpage/src/pages/Hosts.tsx` (`Gallery`'s item mapping now includes `url`; each tile is an `<a href={url} target="_blank">` rendering a real `<img>`/`<video>` thumbnail, falling back to the old placeholder text only if `url` is somehow empty).
+**Call sites checked**: `Gallery` has exactly one call site (`<Gallery hostId={id} />`, same file) — confirmed via grep, no other usage to break. `tsc -b` and `npm run build` both pass.
 
 **Symptom**: A KYC submission viewed in the deployed admin app shows documents that 403 when opened, even on a freshly-fetched presigned URL (rules out expiry). Object keys look like `kyc/{id}/front.pdf`, `kyc/{id}/selfie.pdf`.
 **Root cause**: `npm test` (`vitest.config.ts`) and CI (`.github/workflows/ci.yml`) both read `DATABASE_URL` from the same place local dev and the deployed Render backend use — there was never a separate test database, despite `tech-stack/TECH_STACK.md` §9 documenting "a dedicated Neon branch as the test database" as the intended design. `admin.test.ts`'s `submitFakeKyc()` helper (and everything like it across the suite) writes real rows with fabricated S3 keys that were never actually uploaded — its own comment says as much: "Submits KYC without a real S3 round trip... fake keys are enough." Every local test run and every CI run left this kind of fixture data in the live shared DB.
