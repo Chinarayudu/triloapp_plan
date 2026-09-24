@@ -405,18 +405,12 @@ export const ledgerEntries = pgTable("ledger_entries", {
 // ---------------------------------------------------------------------------
 
 // Admin-configurable catalog (same CRUD spirit as gifts) — the Talktime
-// screen's preset recharge tiles. displayBeans is a marketing number shown
-// alongside the real price, not a real currency (BRD.md: beans are the
-// host's internal earnings unit only) — see wallet.service.ts's
-// paiseToDisplayBeans for the separate flat constant used to render an
-// arbitrary balance in "beans," which these package numbers intentionally
-// don't have to reconcile with (a volume bonus, same idea as withdrawal
-// slabs on the host side).
+// screen's preset recharge tiles. Real currency only — the User app shows ₹,
+// never beans (beans are the host's earnings unit only, BRD.md).
 export const rechargePackages = pgTable("recharge_packages", {
   id: uuid("id").primaryKey().defaultRandom(),
   pricePaise: integer("price_paise").notNull(),
   mrpPaise: integer("mrp_paise"), // optional strikethrough "was" price for display
-  displayBeans: integer("display_beans").notNull(),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -432,7 +426,6 @@ export const rechargeTxns = pgTable("recharge_txns", {
     .notNull()
     .references(() => rechargePackages.id),
   amountPaise: integer("amount_paise").notNull(), // snapshot — a later package price change can't alter an in-flight order
-  displayBeans: integer("display_beans").notNull(), // snapshot
   gateway: text("gateway").notNull().default("dev-stub"),
   gatewayTxnId: text("gateway_txn_id"),
   status: rechargeTxnStatusEnum("status").notNull().default("created"),

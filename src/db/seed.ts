@@ -92,19 +92,19 @@ async function seed(): Promise<void> {
 
   // Talktime screen's preset tiles (User app design follow-up) — per-price
   // check, same reasoning as the gift catalog above.
-  const rechargeDefaults: Array<{ pricePaise: number; mrpPaise: number | null; displayBeans: number }> = [
-    { pricePaise: 19900, mrpPaise: null, displayBeans: 1000 },
-    { pricePaise: 44900, mrpPaise: 49900, displayBeans: 2600 },
-    { pricePaise: 89900, mrpPaise: 99900, displayBeans: 5400 },
-    { pricePaise: 174900, mrpPaise: 199900, displayBeans: 11000 },
-    { pricePaise: 399900, mrpPaise: 399900, displayBeans: 24000 },
-    { pricePaise: 899900, mrpPaise: 999900, displayBeans: 60000 },
+  const rechargeDefaults: Array<{ pricePaise: number; mrpPaise: number | null }> = [
+    { pricePaise: 19900, mrpPaise: null },
+    { pricePaise: 44900, mrpPaise: 49900 },
+    { pricePaise: 89900, mrpPaise: 99900 },
+    { pricePaise: 174900, mrpPaise: 199900 },
+    { pricePaise: 399900, mrpPaise: 399900 },
+    { pricePaise: 899900, mrpPaise: 999900 },
   ];
   for (const pkg of rechargeDefaults) {
     const [existing] = await db.select().from(rechargePackages).where(eq(rechargePackages.pricePaise, pkg.pricePaise)).limit(1);
     if (!existing) {
       await db.insert(rechargePackages).values(pkg);
-      console.log(`Seeded recharge package: ₹${pkg.pricePaise / 100} -> ${pkg.displayBeans} beans`);
+      console.log(`Seeded recharge package: ₹${pkg.pricePaise / 100}`);
     }
   }
 

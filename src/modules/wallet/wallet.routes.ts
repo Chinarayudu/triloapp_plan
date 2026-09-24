@@ -11,7 +11,6 @@ import {
   getCurrentPaisePerBean,
   getHostBeanBalance,
   getUserWalletBalance,
-  paiseToDisplayBeans,
 } from "./wallet.service";
 
 export const walletRouter = Router();
@@ -37,7 +36,7 @@ walletRouter.get("/wallet", requireAuth, async (req, res, next) => {
       return;
     }
     const balancePaise = await getUserWalletBalance(req.user!.sub);
-    res.json({ balancePaise, displayBeans: paiseToDisplayBeans(balancePaise) });
+    res.json({ balancePaise });
   } catch (err) {
     next(err);
   }

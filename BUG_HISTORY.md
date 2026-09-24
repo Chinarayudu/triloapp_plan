@@ -20,6 +20,15 @@ Copy this for each new entry, filled in, added to the top of the log below.
 
 ## Log
 
+### [2026-09-24] User's beans after a recharge don't match the beans the package promised
+
+**Symptom**: A user buys a recharge package advertised as e.g. "₹199 → 1000 beans", but `GET /wallet` then shows `displayBeans: 995` (₹8999 "60000 beans" pack → 44995 shown).
+**Root cause**: Two unrelated bean numbers on the user side. `recharge_packages.displayBeans` was an admin-typed marketing label (never credited — recharge credits `pricePaise`), while `GET /wallet` derived `displayBeans` from paise via a separate flat constant (`paiseToDisplayBeans`, 5 beans/₹). The two were deliberately never reconciled (BACKEND_PLAN's earlier "beans as display label" decision), so they disagreed on every package.
+**Affected files**: `src/modules/wallet/wallet.service.ts` (deleted `paiseToDisplayBeans`/`DISPLAY_BEANS_PER_PAISE`), `src/modules/wallet/wallet.routes.ts` (`GET /wallet` user branch returns `{ balancePaise }` only), `src/modules/wallet/recharge.service.ts`, `src/db/schema.ts` + `drizzle/0020_drop_user_display_beans.sql` (drop `display_beans` from `recharge_packages` and `recharge_txns`), `src/db/seed.ts`, `postman/TriloPlan-User.postman_collection.json`, `BACKEND_PLAN.md`.
+**Fix**: Business decision — the User app shows real currency (₹) only, never beans (matches UX_SCREENS_AND_FLOWS.md's money display convention and BRD's "beans are host-only"). Removed every user-side bean field instead of reconciling them; all user amounts stay integer paise, rendered as paise / 100. No money-movement code changed.
+**Call sites checked**: `paiseToDisplayBeans` — only caller was `GET /wallet`. `displayBeans` on packages/txns — only `listRechargePackages`, `initiateRecharge`, `getRechargeTxnById`, `devResolveRecharge` responses and the seed. Host branch of `GET /wallet`, host beans/earnings/withdrawals, call billing and gift paths untouched. `tsc --noEmit`, full suite (139/139) and User newman collection (60/60 requests, 0 failures, run against the migrated local test DB) pass.
+**Deploy note**: migration `0020` must be applied to each environment (`npm run db:migrate`) together with this code — old code inserting `display_beans` would fail against a migrated DB and vice versa.
+
 ### [2026-09-23] Admin can't see or open a host's gallery photos/videos — Gallery tab never rendered the actual media
 
 **Symptom**: Admin → Hosts → a host → Gallery tab shows tiles with the literal placeholder text "Photo thumbnail"/"Video thumbnail" instead of the actual image/video, and there's no way to open the file at all.

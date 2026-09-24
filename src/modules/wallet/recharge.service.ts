@@ -24,7 +24,6 @@ export async function initiateRecharge(userId: string, packageId: string): Promi
       userId,
       packageId,
       amountPaise: pkg.pricePaise,
-      displayBeans: pkg.displayBeans,
     })
     .returning();
   return txn;
