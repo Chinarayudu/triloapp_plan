@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
 import { broadcastPresence } from "../../realtime/socket";
 import { followHost, listFollowedHosts, unfollowHost } from "./follow.service";
+import { listPublicGalleryItems } from "./gallery.service";
 import { getHostDetail, listHosts, HostListSort } from "./hosts.service";
 import { setOffline, setOnline } from "./presence.store";
 
@@ -45,6 +46,17 @@ hostsRouter.get("/hosts", requireAuth, async (req, res, next) => {
 hostsRouter.get("/hosts/:hostId", requireAuth, async (req, res, next) => {
   try {
     res.json(await getHostDetail(parseHostId(req.params.hostId), req.user!.sub));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Creator Profile screen's Gallery tab — the photos/videos the host uploads
+// via POST /me/host-profile/gallery (Host app), which the detail endpoint's
+// legacy `gallery` string array doesn't include.
+hostsRouter.get("/hosts/:hostId/gallery", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ items: await listPublicGalleryItems(parseHostId(req.params.hostId)) });
   } catch (err) {
     next(err);
   }

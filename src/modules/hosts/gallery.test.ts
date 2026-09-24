@@ -71,4 +71,22 @@ describe("Host gallery (admin design follow-up)", () => {
       .set("Authorization", `Bearer ${admin.accessToken}`);
     expect(auditLog.body.entries[0].action).toBe("gallery.delete");
   });
+
+  it("a user views a host's gallery items, and gets 404 for an id that isn't a host", async () => {
+    const app = createApp();
+    const host = await registerAndLogin(app, "host");
+    const user = await registerAndLogin(app, "user");
+    await request(app)
+      .post("/host/me/host-profile/gallery")
+      .set("Authorization", `Bearer ${host.accessToken}`)
+      .send({ mediaType: "photo", url: "https://example.com/public.jpg" });
+
+    const list = await request(app).get(`/user/hosts/${host.user.id}/gallery`).set("Authorization", `Bearer ${user.accessToken}`);
+    expect(list.status).toBe(200);
+    expect(list.body.items).toHaveLength(1);
+    expect(list.body.items[0].url).toBe("https://example.com/public.jpg");
+
+    const notAHost = await request(app).get(`/user/hosts/${user.user.id}/gallery`).set("Authorization", `Bearer ${user.accessToken}`);
+    expect(notAHost.status).toBe(404);
+  });
 });

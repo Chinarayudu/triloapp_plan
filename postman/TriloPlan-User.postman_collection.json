@@ -840,7 +840,47 @@
                 "{{hostId}}"
               ]
             },
-            "description": "Creator Profile screen (previously had no backing endpoint — only the list view existed) — bio, talksAboutTags/hobbies/sports/languages, gallery, rating, followerCount, isFollowing, online status, derived age."
+            "description": "Creator Profile screen (previously had no backing endpoint — only the list view existed) — avatarUrl, bio, talksAboutTags/hobbies/sports/languages, gallery, rating, followerCount, isFollowing, online status, derived age."
+          }
+        },
+        {
+          "name": "Get Host Gallery",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with an items array', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().items).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/hosts/{{hostId}}/gallery",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "hosts",
+                "{{hostId}}",
+                "gallery"
+              ]
+            },
+            "description": "Creator Profile screen's Gallery tab — the photos/videos the host uploaded from the Host app. Returns { items: [{ id, hostId, mediaType: 'photo'|'video', url, durationSeconds, createdAt }] }, newest first. 404 if the id isn't an active host."
           }
         },
         {

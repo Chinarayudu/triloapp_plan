@@ -1,12 +1,25 @@
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../../db/client";
-import { hostGalleryItems } from "../../db/schema";
+import { hostGalleryItems, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 
 type GalleryItem = typeof hostGalleryItems.$inferSelect;
 
 export async function listGalleryItems(hostId: string): Promise<GalleryItem[]> {
   return db.select().from(hostGalleryItems).where(eq(hostGalleryItems.hostId, hostId)).orderBy(desc(hostGalleryItems.createdAt));
+}
+
+// Creator Profile screen's Gallery tab — any viewer, but only for an active
+// host, same visibility rule as GET /hosts/:hostId (a suspended host's media
+// shouldn't stay browsable just because the id is known).
+export async function listPublicGalleryItems(hostId: string): Promise<GalleryItem[]> {
+  const [host] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.id, hostId), eq(users.role, "host"), eq(users.status, "active")))
+    .limit(1);
+  if (!host) throw new AppError(404, "Host not found");
+  return listGalleryItems(hostId);
 }
 
 export async function addGalleryItem(

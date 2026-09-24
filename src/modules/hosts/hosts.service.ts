@@ -18,6 +18,7 @@ export type HostListParams = {
 export type HostListItem = {
   id: string;
   name: string | null;
+  avatarUrl: string | null;
   bio: string | null;
   gallery: string[];
   ratePerMinutePaise: number | null;
@@ -59,6 +60,7 @@ export async function listHosts(
     .select({
       id: users.id,
       name: users.name,
+      avatarUrl: users.avatarUrl,
       bio: hostProfiles.bio,
       gallery: hostProfiles.gallery,
       ratePerMinutePaise: hostProfiles.ratePerMinutePaise,
@@ -116,6 +118,7 @@ export async function getHostDetail(hostId: string, viewerId: string) {
     .select({
       id: users.id,
       name: users.name,
+      avatarUrl: users.avatarUrl,
       dob: users.dob,
       bio: hostProfiles.bio,
       gallery: hostProfiles.gallery,
