@@ -1,12 +1,14 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../app";
-import { registerAndLogin } from "../../test/helpers";
+import { fundUserWallet, registerAndLogin } from "../../test/helpers";
 
 describe("Chat: sending and reading messages", () => {
   it("sends a message, creates a conversation, and a reply reuses the same conversation", async () => {
     const app = createApp();
     const user = await registerAndLogin(app, "user");
+
+    await fundUserWallet(app, user.accessToken, 10000); // user→host messages are paid (host levels)
     const host = await registerAndLogin(app, "host");
 
     const first = await request(app)
@@ -37,6 +39,8 @@ describe("Chat: sending and reading messages", () => {
   it("lists conversations for both participants with the other party's info", async () => {
     const app = createApp();
     const user = await registerAndLogin(app, "user");
+
+    await fundUserWallet(app, user.accessToken, 10000); // user→host messages are paid (host levels)
     const host = await registerAndLogin(app, "host");
 
     await request(app)
@@ -71,6 +75,8 @@ describe("Chat: sending and reading messages", () => {
   it("rejects reading a conversation you're not part of", async () => {
     const app = createApp();
     const user = await registerAndLogin(app, "user");
+
+    await fundUserWallet(app, user.accessToken, 10000); // user→host messages are paid (host levels)
     const host = await registerAndLogin(app, "host");
     const outsider = await registerAndLogin(app, "user");
 
@@ -88,6 +94,8 @@ describe("Chat: sending and reading messages", () => {
   it("rejects empty message content", async () => {
     const app = createApp();
     const user = await registerAndLogin(app, "user");
+
+    await fundUserWallet(app, user.accessToken, 10000); // user→host messages are paid (host levels)
     const host = await registerAndLogin(app, "host");
 
     const res = await request(app)

@@ -293,6 +293,16 @@ Splitting the API by app surfaced (and motivated fixing) a leftover assumption f
 - The OTP delivery/verification mechanism itself (`otp.service.ts`) is unchanged — proving a phone number is real is role-agnostic; only the find-or-create-account step after that succeeds is role-scoped now.
 - Both frontend apps previously had a defensive "reject if the returned account's role doesn't match what we asked for" check (added when this coupling was still a live bug) — removed as dead code once the backend fix made a role mismatch structurally impossible to get back from either app's own OTP verify call.
 
+### Host levels + paid messages — built (2026-09-24)
+
+Business rules are in BRD.md's BR-DIS-03 / BR-CHAT-03 amendments. How it's built:
+
+- **One source of truth**: `hosts/levels.ts` holds the formula (Level 1 = ₹20 voice / ₹30 video / ₹5 message, +₹20 per level, one level per 1,00,000 lifetime beans, max 20) and `effectiveRate()` — the host's own rate capped at the level max, or the level max if unset. Every price a user sees or pays goes through it: `GET /hosts`, `GET /hosts/:id`, `initiateCall` (snapshotted onto the call as before, so a mid-call level-up doesn't reprice it), and paid chat.
+- **Level is derived, not stored**: `host_wallets.lifetime_earned_beans` (migration `0021_host_levels.sql`) is incremented only inside `transferUserToHost`, in the same row update as the bean balance — so only real earnings (call ticks, gifts, paid messages) count; withdrawal debits/reversals (`debitHostBeans`/`creditHostBeans`) never touch it. Existing hosts start at 0 = Level 1.
+- **Paid messages**: `chat.service.ts`'s `sendPaidUserMessage` stores the message and runs `transferUserToHost` (`referenceType: "chat_message"`) in one transaction — a 402 rolls the message back, so it's never stored or delivered unpaid. `chat_messages` gained charge snapshot columns (all 0 for free host→user messages). Admin dashboard revenue/commission/top-earners now include message revenue.
+- **Host app**: `GET /host/me/level` (level, progress, current vs. max prices, full 20-level table); `PATCH /host/me/host-profile` rejects a rate above the level max (400) and accepts `null` to follow the level price; `host:level-up` socket event after the earning transaction commits.
+- **Not done yet**: the level formula is code constants, not an admin-editable table (BR-ADM-02 asks for pricing levers without a deployment) — a follow-up if the business wants to tune it live. In-call chat messages are charged like any other user→host message.
+
 ---
 
 ## Open decisions before implementation starts

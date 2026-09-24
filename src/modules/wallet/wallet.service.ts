@@ -14,6 +14,7 @@ export type LedgerReferenceType =
   | "recharge"
   | "call_billing"
   | "gift"
+  | "chat_message"
   | "commission"
   | "withdrawal"
   | "refund"
@@ -180,7 +181,12 @@ export async function transferUserToHost(
     debitIdempotencyKey: string;
     creditIdempotencyKey: string;
   },
-): Promise<{ userBalanceAfter: number; hostBalanceAfter: number }> {
+): Promise<{
+  userBalanceAfter: number;
+  hostBalanceAfter: number;
+  hostLifetimeBeansBefore: number;
+  hostLifetimeBeansAfter: number;
+}> {
   const { userId, hostId, amountPaise, beans, referenceType, referenceId, debitIdempotencyKey, creditIdempotencyKey } =
     params;
 
@@ -204,10 +210,15 @@ export async function transferUserToHost(
   const [hostWallet] = await tx.select().from(hostWallets).where(eq(hostWallets.hostId, hostId)).for("update");
   if (!hostWallet) throw new Error(`No host wallet row for host ${hostId}`);
 
+  // lifetimeEarnedBeans (drives host level, hosts/levels.ts) moves in the same
+  // row update as the balance — this is the only place real earnings enter a
+  // host wallet, so the two can't drift.
   const hostBalanceAfter = hostWallet.beanBalance + beans;
+  const hostLifetimeBeansBefore = hostWallet.lifetimeEarnedBeans;
+  const hostLifetimeBeansAfter = hostLifetimeBeansBefore + beans;
   await tx
     .update(hostWallets)
-    .set({ beanBalance: hostBalanceAfter, updatedAt: new Date() })
+    .set({ beanBalance: hostBalanceAfter, lifetimeEarnedBeans: hostLifetimeBeansAfter, updatedAt: new Date() })
     .where(eq(hostWallets.hostId, hostId));
   await tx.insert(ledgerEntries).values({
     walletType: "host",
@@ -220,5 +231,5 @@ export async function transferUserToHost(
     idempotencyKey: creditIdempotencyKey,
   });
 
-  return { userBalanceAfter, hostBalanceAfter };
+  return { userBalanceAfter, hostBalanceAfter, hostLifetimeBeansBefore, hostLifetimeBeansAfter };
 }

@@ -840,7 +840,7 @@
                 "{{hostId}}"
               ]
             },
-            "description": "Creator Profile screen (previously had no backing endpoint — only the list view existed) — avatarUrl, bio, talksAboutTags/hobbies/sports/languages, gallery, rating, followerCount, isFollowing, online status, derived age."
+            "description": "Creator Profile screen (previously had no backing endpoint — only the list view existed) — level, ratePerMinutePaise/voiceRatePerMinutePaise/messageRatePaise (the prices this user will actually be charged, set by the host level), avatarUrl, bio, talksAboutTags/hobbies/sports/languages, gallery, rating, followerCount, isFollowing, online status, derived age."
           }
         },
         {
@@ -1518,7 +1518,8 @@
                 "chat",
                 "messages"
               ]
-            }
+            },
+            "description": "Paid: each message to a host costs that host's message price (Level 1 = ₹5, +₹20 per host level; see messageRatePaise on Get Host Detail). Response adds chargedPaise and userBalanceAfterPaise. 402 \"Insufficient wallet balance\" if the user can't cover it — the message is not stored or delivered."
           },
           "event": [
             {

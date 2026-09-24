@@ -516,7 +516,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"bio\": \"Late night chats, music and good vibes\",\n  \"ratePerMinutePaise\": 2400,\n  \"voiceRatePerMinutePaise\": 1200,\n  \"privateLiveRatePerMinutePaise\": 3000,\n  \"autoAcceptCalls\": true,\n  \"voiceCallsOnlyAfterMidnight\": false\n}"
+              "raw": "{\n  \"bio\": \"Late night chats, music and good vibes\",\n  \"ratePerMinutePaise\": 2400,\n  \"voiceRatePerMinutePaise\": 1200,\n  \"messageRatePaise\": 500,\n  \"privateLiveRatePerMinutePaise\": 3000,\n  \"autoAcceptCalls\": true,\n  \"voiceCallsOnlyAfterMidnight\": false\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/host/me/host-profile",
@@ -529,7 +529,48 @@
                 "host-profile"
               ]
             },
-            "description": "Rate Settings screen's \"Save rates\" action — video/voice/private-live per-minute rates (paise) plus the two availability toggles. Must be called before Calls (below) can succeed — a call needs the relevant per-type rate set."
+            "description": "Rate Settings screen's \"Save rates\" action — video/voice per-minute rates, per-message price, private-live rate (all paise) plus the two availability toggles. Video/voice/message are capped at the host's level maximum (see Get My Level) — above it is a 400. Send null for any of those three to charge the level price, which then rises automatically on level-up. A host who never sets a rate charges the level price (Level 1: ₹30 video, ₹20 voice, ₹5 message)."
+          }
+        },
+        {
+          "name": "Get My Level",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with level info', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.level).to.be.within(1, 20);",
+                  "  pm.expect(b.levels).to.have.length(20);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/me/level",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "level"
+              ]
+            },
+            "description": "Level screen. Returns { level, maxLevel: 20, lifetimeEarnedBeans, beansPerLevel: 100000, beansToNextLevel (null at 20), maxPrices, currentPrices, nextLevelMaxPrices (null at 20), levels: [{ level, requiredLifetimeBeans, voiceRatePerMinutePaise, videoRatePerMinutePaise, messageRatePaise }] }. Levels rise automatically every 1,00,000 lifetime-earned beans (withdrawals never lower it); each level adds ₹20 to all three max prices. Also pushed live as the host:level-up socket event."
           }
         },
         {

@@ -12,6 +12,7 @@ import {
   listMessages,
   otherParticipantId,
   sendMessage,
+  sendPaidUserMessage,
 } from "./chat.service";
 
 export const chatRouter = Router();
@@ -28,7 +29,16 @@ chatRouter.post("/chat/messages", requireAuth, validateBody(sendMessageSchema), 
     const senderRole = req.user!.role as "user" | "host";
 
     const conversation = await findOrCreateConversation(senderId, senderRole, recipientId);
-    const message = await sendMessage(conversation.id, senderId, content);
+    // Users pay per message to a host (host levels); hosts message users free.
+    let message;
+    let userBalanceAfterPaise: number | null = null;
+    if (senderRole === "user") {
+      const paid = await sendPaidUserMessage(conversation, content);
+      message = paid.message;
+      userBalanceAfterPaise = paid.userBalanceAfterPaise;
+    } else {
+      message = await sendMessage(conversation.id, senderId, content);
+    }
 
     const payload = {
       conversationId: conversation.id,
@@ -43,7 +53,9 @@ chatRouter.post("/chat/messages", requireAuth, validateBody(sendMessageSchema), 
       void sendPushNotification(recipientId, "New message", content.slice(0, 100));
     }
 
-    res.status(201).json(payload);
+    // chargedPaise/userBalanceAfterPaise go to the sender only — the host's
+    // chat:message event never reveals what the user paid.
+    res.status(201).json({ ...payload, chargedPaise: message.chargedPaise, userBalanceAfterPaise });
   } catch (err) {
     next(err);
   }

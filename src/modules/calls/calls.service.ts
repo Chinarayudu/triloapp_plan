@@ -10,7 +10,8 @@ import { emitToUser, isUserConnected } from "../../realtime/socket";
 import { areBlocked } from "../moderation/blocks.service";
 import { checkCallCollusion } from "../moderation/fraud.service";
 import { createNotification } from "../notifications/notifications.service";
-import { getHostProfile, getUserById } from "../users/users.service";
+import { getUserById } from "../users/users.service";
+import { getHostEffectivePrices, notifyIfLevelledUp } from "../hosts/levels";
 import { getVipCallDiscountBasisPoints, isVipActive } from "../wallet/vip.service";
 import {
   getCurrentCommissionBasisPoints,
@@ -110,11 +111,11 @@ export async function initiateCall(
     throw new AppError(403, "This call cannot be connected");
   }
 
-  const hostProfile = await getHostProfile(hostId);
-  const baseRatePerMinutePaise = type === "voice" ? hostProfile?.voiceRatePerMinutePaise : hostProfile?.ratePerMinutePaise;
-  if (!baseRatePerMinutePaise) {
-    throw new AppError(400, `Host hasn't set a ${type} rate yet`);
-  }
+  // Host level sets the price (hosts/levels.ts) — the host's own rate, capped
+  // at their level's maximum, or the level price if they haven't set one.
+  // Snapshotted onto the call below, so a level-up mid-call doesn't reprice it.
+  const prices = await getHostEffectivePrices(hostId);
+  const baseRatePerMinutePaise = type === "voice" ? prices.voiceRatePerMinutePaise : prices.videoRatePerMinutePaise;
 
   // VIP Rate benefit (User app design follow-up) — the discount reduces the
   // price charged to the user, and everything downstream (commission, host
@@ -349,10 +350,10 @@ async function runBillingTickInner(callId: string): Promise<{ billed: boolean }>
   // where a crash between them could debit a user without ever paying
   // the host. transferUserToHost (wallet.service.ts) is the shared
   // primitive that closes that gap, also used by gifts.service.ts.
-  let userBalanceAfter: number;
+  let transfer: Awaited<ReturnType<typeof transferUserToHost>>;
   try {
-    userBalanceAfter = await db.transaction(async (tx) => {
-      const { userBalanceAfter: newUserBalance } = await transferUserToHost(tx, {
+    transfer = await db.transaction(async (tx) => {
+      const result = await transferUserToHost(tx, {
         userId: call.userId,
         hostId: call.hostId,
         amountPaise: tickCost,
@@ -374,7 +375,7 @@ async function runBillingTickInner(callId: string): Promise<{ billed: boolean }>
         })
         .where(eq(calls.id, callId));
 
-      return newUserBalance;
+      return result;
     });
   } catch (err) {
     if (err instanceof AppError && err.statusCode === 402) {
@@ -383,6 +384,9 @@ async function runBillingTickInner(callId: string): Promise<{ billed: boolean }>
     }
     throw err;
   }
+
+  notifyIfLevelledUp(call.hostId, transfer.hostLifetimeBeansBefore, transfer.hostLifetimeBeansAfter);
+  const userBalanceAfter = transfer.userBalanceAfter;
 
   if (userBalanceAfter < tickCost) {
     emitToUser(call.userId, "call:low-balance-warning", { callId, remainingPaise: userBalanceAfter });

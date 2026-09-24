@@ -1,8 +1,9 @@
 import { and, count, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { hostFollows, hostGalleryItems, hostProfiles, users } from "../../db/schema";
+import { hostFollows, hostGalleryItems, hostProfiles, hostWallets, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { getHostRatingSummaries, getHostRatingSummary, RatingSummary } from "../calls/ratings.service";
+import { effectiveRate, getHostEffectivePrices, levelForLifetimeBeans, pricesForLevel } from "./levels";
 import { listOnlineHostIds } from "./presence.store";
 
 export type HostListSort = "rate_asc" | "rate_desc" | "online_first" | "rating_desc";
@@ -21,7 +22,12 @@ export type HostListItem = {
   avatarUrl: string | null;
   bio: string | null;
   gallery: string[];
-  ratePerMinutePaise: number | null;
+  level: number;
+  // What a user is charged right now — host's own rate capped at their level
+  // maximum, or the level price if unset (hosts/levels.ts). Never null.
+  ratePerMinutePaise: number;
+  voiceRatePerMinutePaise: number;
+  messageRatePaise: number;
   isOnline: boolean;
   rating: RatingSummary;
   galleryCount: number;
@@ -64,9 +70,13 @@ export async function listHosts(
       bio: hostProfiles.bio,
       gallery: hostProfiles.gallery,
       ratePerMinutePaise: hostProfiles.ratePerMinutePaise,
+      voiceRatePerMinutePaise: hostProfiles.voiceRatePerMinutePaise,
+      messageRatePaise: hostProfiles.messageRatePaise,
+      lifetimeEarnedBeans: hostWallets.lifetimeEarnedBeans,
     })
     .from(users)
     .innerJoin(hostProfiles, eq(hostProfiles.userId, users.id))
+    .innerJoin(hostWallets, eq(hostWallets.hostId, users.id))
     .where(and(...conditions));
 
   const onlineIds = new Set(listOnlineHostIds());
@@ -74,12 +84,24 @@ export async function listHosts(
     getHostRatingSummaries(rows.map((r) => r.id)),
     getGalleryCounts(rows.map((r) => r.id)),
   ]);
-  let hosts: HostListItem[] = rows.map((r) => ({
-    ...r,
-    isOnline: onlineIds.has(r.id),
-    rating: ratings.get(r.id) ?? { average: null, count: 0 },
-    galleryCount: galleryCounts.get(r.id) ?? 0,
-  }));
+  let hosts: HostListItem[] = rows.map((r) => {
+    const level = levelForLifetimeBeans(r.lifetimeEarnedBeans);
+    const max = pricesForLevel(level);
+    return {
+      id: r.id,
+      name: r.name,
+      avatarUrl: r.avatarUrl,
+      bio: r.bio,
+      gallery: r.gallery,
+      level,
+      ratePerMinutePaise: effectiveRate(r.ratePerMinutePaise, max.videoRatePerMinutePaise),
+      voiceRatePerMinutePaise: effectiveRate(r.voiceRatePerMinutePaise, max.voiceRatePerMinutePaise),
+      messageRatePaise: effectiveRate(r.messageRatePaise, max.messageRatePaise),
+      isOnline: onlineIds.has(r.id),
+      rating: ratings.get(r.id) ?? { average: null, count: 0 },
+      galleryCount: galleryCounts.get(r.id) ?? 0,
+    };
+  });
 
   if (params.onlineOnly) {
     hosts = hosts.filter((h) => h.isOnline);
@@ -89,9 +111,9 @@ export async function listHosts(
   // sorting on either — or on anything else merged in after the query —
   // has to happen here in application code rather than as a SQL ORDER BY.
   if (params.sort === "rate_asc") {
-    hosts.sort((a, b) => (a.ratePerMinutePaise ?? Infinity) - (b.ratePerMinutePaise ?? Infinity));
+    hosts.sort((a, b) => a.ratePerMinutePaise - b.ratePerMinutePaise);
   } else if (params.sort === "rate_desc") {
-    hosts.sort((a, b) => (b.ratePerMinutePaise ?? -Infinity) - (a.ratePerMinutePaise ?? -Infinity));
+    hosts.sort((a, b) => b.ratePerMinutePaise - a.ratePerMinutePaise);
   } else if (params.sort === "online_first") {
     hosts.sort((a, b) => Number(b.isOnline) - Number(a.isOnline));
   } else if (params.sort === "rating_desc") {
@@ -122,8 +144,6 @@ export async function getHostDetail(hostId: string, viewerId: string) {
       dob: users.dob,
       bio: hostProfiles.bio,
       gallery: hostProfiles.gallery,
-      ratePerMinutePaise: hostProfiles.ratePerMinutePaise,
-      voiceRatePerMinutePaise: hostProfiles.voiceRatePerMinutePaise,
       languages: hostProfiles.languages,
       talksAboutTags: hostProfiles.talksAboutTags,
       hobbies: hostProfiles.hobbies,
@@ -142,9 +162,14 @@ export async function getHostDetail(hostId: string, viewerId: string) {
     .where(and(eq(hostFollows.hostId, hostId), eq(hostFollows.userId, viewerId)));
 
   const { dob, ...publicFields } = row; // dob itself is PII — only the derived age is public
+  const prices = await getHostEffectivePrices(hostId);
 
   return {
     ...publicFields,
+    level: prices.level,
+    ratePerMinutePaise: prices.videoRatePerMinutePaise,
+    voiceRatePerMinutePaise: prices.voiceRatePerMinutePaise,
+    messageRatePaise: prices.messageRatePaise,
     age: ageFromDob(dob),
     isOnline: listOnlineHostIds().includes(hostId),
     rating: await getHostRatingSummary(hostId),

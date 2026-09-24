@@ -93,6 +93,7 @@ Each requirement is labeled `BR-<module>-<num>` for traceability.
 - **BR-DIS-01**: Hosts shall be able to set themselves online/available or offline/busy in real time, and this status shall be visible to Users within a short, defined delay (target: under a few seconds).
 - **BR-DIS-02**: Users shall see a list of currently available hosts, each showing their per-minute rate, and shall be able to filter/sort that list (e.g., by availability, price, rating).
 - **BR-DIS-03**: Each host's per-minute rate shall be set by the host (within any bounds Admin chooses to enforce) and shall be clearly shown to the User before a call begins.
+  - **Amended (2026-09-24, host levels)**: the bound is the host's **level**. Every host starts at Level 1 (voice ₹20/min, video ₹30/min, message ₹5) and goes up one level per 1,00,000 lifetime-earned beans, to a maximum of Level 20; each level adds ₹20 to all three prices. A level's prices are the host's **maximum** — a host may set a lower rate; a host who hasn't set one charges exactly the level price, so it rises automatically on level-up. Levels never go down (withdrawals don't lower lifetime earnings). Hosts that existed before this change also start at Level 1.
 
 ### 5.4 Video calling & billing
 
@@ -129,6 +130,7 @@ Each requirement is labeled `BR-<module>-<num>` for traceability.
 - **BR-CHAT-01**: Users and Hosts shall be able to exchange 1:1 text messages, with message history persisted and retrievable.
 - **BR-CHAT-02**: A message shall be delivered in real time when the recipient is active in the app, and via push notification when they are not.
 - **BR-CHAT-03**: Whether chat messages are free or charged shall be an Admin-configurable business decision (open item — see `DEVELOPMENT_ROADMAP.md`).
+  - **Resolved (2026-09-24, host levels)**: a User pays per message sent to a Host, at that host's message price (set by host level, BR-DIS-03 amendment), with the same commission → beans split as gifts; the message isn't delivered if the User's balance can't cover it. Host → User messages are free. The price is set by the level formula, not yet editable by Admin without a deployment.
 
 ### 5.9 Gifting
 

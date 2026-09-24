@@ -41,10 +41,10 @@ describe("Profile endpoints", () => {
     const res = await request(app)
       .patch("/host/me/host-profile")
       .set("Authorization", `Bearer ${accessToken}`)
-      .send({ bio: "Hi there", ratePerMinutePaise: 5000 });
+      .send({ bio: "Hi there", ratePerMinutePaise: 2500 }); // under the Level 1 video max of ₹30
     expect(res.status).toBe(200);
     expect(res.body.bio).toBe("Hi there");
-    expect(res.body.ratePerMinutePaise).toBe(5000);
+    expect(res.body.ratePerMinutePaise).toBe(2500);
   });
 
   const beautySettings = {

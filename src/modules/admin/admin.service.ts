@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNull, lte, SQL, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNull, lte, SQL, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import {
   adultModeConfigs,
@@ -6,6 +6,8 @@ import {
   beansEarnConfigs,
   calls,
   captureEvents,
+  chatConversations,
+  chatMessages,
   commissionConfigs,
   giftTransactions,
   gifts,
@@ -452,6 +454,20 @@ export async function getDashboardStats(from?: Date, to?: Date) {
     .from(giftTransactions)
     .where(giftsInPeriod);
 
+  // Paid user→host messages (host levels) — host→user messages have chargedPaise 0.
+  const paidMessagesInPeriod = and(
+    gt(chatMessages.chargedPaise, 0),
+    gte(chatMessages.createdAt, periodStart),
+    lte(chatMessages.createdAt, periodEnd),
+  )!;
+  const [{ messageRevenuePaise, messageCommissionPaise }] = await db
+    .select({
+      messageRevenuePaise: sql<number>`coalesce(sum(${chatMessages.chargedPaise}), 0)::int`,
+      messageCommissionPaise: sql<number>`coalesce(sum(${chatMessages.chargedPaise} - ${chatMessages.beansCredited} * ${chatMessages.paisePerBeanSnapshot}), 0)::int`,
+    })
+    .from(chatMessages)
+    .where(paidMessagesInPeriod);
+
   // One row per day in the period — "Revenue (bars) · call minutes
   // (secondary series)" per the design's chart caption. Gift revenue isn't
   // broken out separately here (the chart only shows two series); it's
@@ -491,11 +507,21 @@ export async function getDashboardStats(from?: Date, to?: Date) {
     .where(giftsInPeriod)
     .groupBy(giftTransactions.recipientId);
 
+  const hostMessageStats = await db
+    .select({
+      hostId: chatConversations.hostId,
+      amountPaise: sql<number>`coalesce(sum(${chatMessages.chargedPaise}), 0)::int`,
+    })
+    .from(chatMessages)
+    .innerJoin(chatConversations, eq(chatConversations.id, chatMessages.conversationId))
+    .where(paidMessagesInPeriod)
+    .groupBy(chatConversations.hostId);
+
   const earningsByHostId = new Map<string, { earningsPaise: number; callMinutes: number }>();
   for (const row of hostCallStats) {
     earningsByHostId.set(row.hostId, { earningsPaise: row.amountPaise, callMinutes: row.callMinutes });
   }
-  for (const row of hostGiftStats) {
+  for (const row of [...hostGiftStats, ...hostMessageStats]) {
     const existing = earningsByHostId.get(row.hostId) ?? { earningsPaise: 0, callMinutes: 0 };
     earningsByHostId.set(row.hostId, { ...existing, earningsPaise: existing.earningsPaise + row.amountPaise });
   }
@@ -525,8 +551,8 @@ export async function getDashboardStats(from?: Date, to?: Date) {
     pendingKycCount,
     pendingWithdrawalCount,
     pendingReportCount,
-    revenuePaise: callRevenuePaise + giftRevenuePaise,
-    commissionCollectedPaise: commissionPaise + giftCommissionPaise,
+    revenuePaise: callRevenuePaise + giftRevenuePaise + messageRevenuePaise,
+    commissionCollectedPaise: commissionPaise + giftCommissionPaise + messageCommissionPaise,
     totalCallMinutes: Math.round((callMinuteTicks * (TICK_INTERVAL_MS / 1000)) / 60),
     series,
     topEarningHosts,

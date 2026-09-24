@@ -4,6 +4,8 @@ import { chatConversations, chatMessages, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { areBlocked } from "../moderation/blocks.service";
 import { getUserById } from "../users/users.service";
+import { getHostEffectivePrices, notifyIfLevelledUp } from "../hosts/levels";
+import { getCurrentCommissionBasisPoints, getCurrentPaisePerBean, transferUserToHost } from "../wallet/wallet.service";
 
 type ChatConversation = typeof chatConversations.$inferSelect;
 
@@ -70,6 +72,51 @@ export async function sendMessage(conversationId: string, senderId: string, cont
     .set({ lastMessageAt: message.createdAt })
     .where(eq(chatConversations.id, conversationId));
   return message;
+}
+
+// User→host messages are paid (host levels, hosts/levels.ts) — same
+// commission→beans math and snapshot reasoning as gifts.service.ts's sendGift.
+// The message row and the money transfer commit together: a user with too
+// little balance gets a 402 and the message is never stored or delivered.
+export async function sendPaidUserMessage(conversation: ChatConversation, content: string) {
+  const { messageRatePaise: price } = await getHostEffectivePrices(conversation.hostId);
+  const commissionBasisPointsSnapshot = await getCurrentCommissionBasisPoints(conversation.hostId);
+  const paisePerBeanSnapshot = await getCurrentPaisePerBean();
+  const commissionAmount = Math.floor((price * commissionBasisPointsSnapshot) / 10_000);
+  const netToHost = price - commissionAmount;
+  const beans = Math.floor(netToHost / paisePerBeanSnapshot);
+
+  const { message, transfer } = await db.transaction(async (tx) => {
+    const [message] = await tx
+      .insert(chatMessages)
+      .values({
+        conversationId: conversation.id,
+        senderId: conversation.userId,
+        content,
+        chargedPaise: price,
+        commissionBasisPointsSnapshot,
+        paisePerBeanSnapshot,
+        beansCredited: beans,
+      })
+      .returning();
+
+    const transfer = await transferUserToHost(tx, {
+      userId: conversation.userId,
+      hostId: conversation.hostId,
+      amountPaise: price,
+      beans,
+      referenceType: "chat_message",
+      referenceId: message.id,
+      debitIdempotencyKey: `chat:${message.id}:debit`,
+      creditIdempotencyKey: `chat:${message.id}:credit`,
+    });
+
+    await tx.update(chatConversations).set({ lastMessageAt: message.createdAt }).where(eq(chatConversations.id, conversation.id));
+    return { message, transfer };
+  });
+
+  notifyIfLevelledUp(conversation.hostId, transfer.hostLifetimeBeansBefore, transfer.hostLifetimeBeansAfter);
+  return { message, userBalanceAfterPaise: transfer.userBalanceAfter };
 }
 
 export async function listMessages(conversationId: string, page: number, pageSize: number) {

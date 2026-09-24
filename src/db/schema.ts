@@ -125,6 +125,10 @@ export const hostProfiles = pgTable("host_profiles", {
   // exists yet, same "field before the feature" precedent as this table's
   // original payoutDetails placeholder.
   privateLiveRatePerMinutePaise: integer("private_live_rate_per_minute_paise"),
+  // Price a user pays per message sent to this host. Like the call rates
+  // above, null means "charge my level's price" and a set value is capped at
+  // the level's price (hosts/levels.ts).
+  messageRatePaise: integer("message_rate_paise"),
   autoAcceptCalls: boolean("auto_accept_calls").notNull().default(true),
   voiceCallsOnlyAfterMidnight: boolean("voice_calls_only_after_midnight").notNull().default(false),
   // Creator Profile screen's structured sections (User app design
@@ -353,6 +357,7 @@ export const ledgerReferenceTypeEnum = pgEnum("ledger_reference_type", [
   "recharge",
   "call_billing",
   "gift",
+  "chat_message",
   "commission",
   "withdrawal",
   "refund",
@@ -377,6 +382,13 @@ export const hostWallets = pgTable("host_wallets", {
     .primaryKey()
     .references(() => users.id, { onDelete: "cascade" }),
   beanBalance: integer("bean_balance").notNull().default(0),
+  // Host level (hosts/levels.ts) is derived from this, not from beanBalance —
+  // withdrawing must never drop a host's level. Only ever incremented by
+  // transferUserToHost (real earnings: calls, gifts, paid messages), never by
+  // a withdrawal reversal or admin adjustment. Starts at 0 for every host,
+  // including hosts that existed before levels (business decision: everyone
+  // starts at Level 1).
+  lifetimeEarnedBeans: integer("lifetime_earned_beans").notNull().default(0),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -640,6 +652,12 @@ export const chatMessages = pgTable("chat_messages", {
     .notNull()
     .references(() => users.id),
   content: text("content").notNull(),
+  // Snapshots of what a user→host message cost (same reasoning as
+  // giftTransactions' snapshots). All zero for host→user messages, which are free.
+  chargedPaise: integer("charged_paise").notNull().default(0),
+  commissionBasisPointsSnapshot: integer("commission_basis_points_snapshot").notNull().default(0),
+  paisePerBeanSnapshot: integer("paise_per_bean_snapshot").notNull().default(0),
+  beansCredited: integer("beans_credited").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

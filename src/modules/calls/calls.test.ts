@@ -7,10 +7,11 @@ import { expireRinging, runBillingTick } from "./calls.service";
 
 async function setupOnlineHost(app: Express, ratePerMinutePaise: number) {
   const host = await registerAndLogin(app, "host");
-  await request(app)
+  const profile = await request(app)
     .patch("/host/me/host-profile")
     .set("Authorization", `Bearer ${host.accessToken}`)
     .send({ ratePerMinutePaise });
+  expect(profile.status).toBe(200); // a rate above the host level cap is a 400 — fail here, not later
   await request(app)
     .patch("/host/me/presence")
     .set("Authorization", `Bearer ${host.accessToken}`)
@@ -21,7 +22,7 @@ async function setupOnlineHost(app: Express, ratePerMinutePaise: number) {
 describe("Calls: happy path with full billing reconciliation", () => {
   it("initiates, accepts, bills three ticks correctly, and ends with matching totals", async () => {
     const app = createApp();
-    const host = await setupOnlineHost(app, 6000); // ₹60/min -> 1000 paise per 10s tick
+    const host = await setupOnlineHost(app, 3000); // ₹30/min (Level 1 video max) -> 500 paise per 10s tick
     const user = await registerAndLogin(app, "user");
     await fundUserWallet(app, user.accessToken, 10000);
 
@@ -46,17 +47,17 @@ describe("Calls: happy path with full billing reconciliation", () => {
     }
 
     const userWallet = await request(app).get("/user/wallet").set("Authorization", `Bearer ${user.accessToken}`);
-    expect(userWallet.body.balancePaise).toBe(10000 - 3000); // 3 ticks * 1000 paise
+    expect(userWallet.body.balancePaise).toBe(10000 - 1500); // 3 ticks * 500 paise
 
     const hostWallet = await request(app).get("/host/wallet").set("Authorization", `Bearer ${host.accessToken}`);
-    // commission is 20% (seeded default): 1000 paise/tick -> 200 commission, 800 net -> 800 beans (1:1)
-    expect(hostWallet.body.beanBalance).toBe(800 * 3);
+    // commission is 20% (seeded default): 500 paise/tick -> 100 commission, 400 net -> 400 beans (1:1)
+    expect(hostWallet.body.beanBalance).toBe(400 * 3);
 
     const end = await request(app).post(`/user/calls/${callId}/end`).set("Authorization", `Bearer ${user.accessToken}`);
     expect(end.status).toBe(200);
     expect(end.body.status).toBe("completed");
-    expect(end.body.totalAmountPaise).toBe(3000);
-    expect(end.body.totalBeans).toBe(2400);
+    expect(end.body.totalAmountPaise).toBe(1500);
+    expect(end.body.totalBeans).toBe(1200);
 
     const fetched = await request(app).get(`/user/calls/${callId}`).set("Authorization", `Bearer ${user.accessToken}`);
     expect(fetched.body.tickCount).toBe(3);
@@ -71,7 +72,7 @@ describe("Calls: happy path with full billing reconciliation", () => {
 describe("Calls: gating and concurrency", () => {
   it("rejects initiating a call when the user has insufficient balance", async () => {
     const app = createApp();
-    const host = await setupOnlineHost(app, 6000);
+    const host = await setupOnlineHost(app, 3000);
     const user = await registerAndLogin(app, "user"); // unfunded
 
     const res = await request(app)

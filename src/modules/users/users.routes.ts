@@ -10,6 +10,7 @@ import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
 import { getHostRatingSummary } from "../calls/ratings.service";
 import { addGalleryItem, deleteOwnGalleryItem, listGalleryItems } from "../hosts/gallery.service";
+import { getHostLevelPrices, getHostLevelSummary } from "../hosts/levels";
 import {
   addPayoutMethod,
   deletePayoutMethod,
@@ -147,8 +148,11 @@ usersRouter.post("/me/delete-account", requireAuth, validateBody(deleteAccountSc
 const updateHostProfileSchema = z.object({
   bio: z.string().max(500).optional(),
   gallery: z.array(z.string().url()).max(20).optional(),
-  ratePerMinutePaise: z.number().int().positive().optional(),
-  voiceRatePerMinutePaise: z.number().int().positive().optional(),
+  // Capped at the host's level maximum (hosts/levels.ts); null = "charge my
+  // level's price", which then rises automatically on every level-up.
+  ratePerMinutePaise: z.number().int().positive().nullable().optional(),
+  voiceRatePerMinutePaise: z.number().int().positive().nullable().optional(),
+  messageRatePaise: z.number().int().positive().nullable().optional(),
   privateLiveRatePerMinutePaise: z.number().int().positive().optional(),
   autoAcceptCalls: z.boolean().optional(),
   voiceCallsOnlyAfterMidnight: z.boolean().optional(),
@@ -167,6 +171,17 @@ usersRouter.patch(
   async (req, res, next) => {
     try {
       const updates = req.body as z.infer<typeof updateHostProfileSchema>;
+      const { level, max } = await getHostLevelPrices(req.user!.sub);
+      const capped: Array<[number | null | undefined, number, string]> = [
+        [updates.ratePerMinutePaise, max.videoRatePerMinutePaise, "Video rate"],
+        [updates.voiceRatePerMinutePaise, max.voiceRatePerMinutePaise, "Voice rate"],
+        [updates.messageRatePaise, max.messageRatePaise, "Message price"],
+      ];
+      for (const [value, cap, label] of capped) {
+        if (value != null && value > cap) {
+          throw new AppError(400, `${label} can't exceed your Level ${level} maximum of ₹${cap / 100}`);
+        }
+      }
       const [updated] = await db
         .update(hostProfiles)
         .set({ ...updates, updatedAt: new Date() })
@@ -178,6 +193,16 @@ usersRouter.patch(
     }
   },
 );
+
+// Host app's Level screen — current level, progress to the next, the prices
+// the host is charging now vs. their level maximum, and the full 20-level table.
+usersRouter.get("/me/level", requireAuth, requireRole("host"), async (req, res, next) => {
+  try {
+    res.json(await getHostLevelSummary(req.user!.sub));
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Beauty/filter pipeline lives entirely client-side (in-camera Beauty
 // screen); this just persists and round-trips the one JSON blob it produces,

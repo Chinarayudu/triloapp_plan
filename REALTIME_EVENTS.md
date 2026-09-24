@@ -60,6 +60,7 @@ server gives no signal that a refresh is due.
 | `gift:requestDeclined` | `POST /gifts/request/decline` | the declined host | `{ userId, giftId }` (`giftId` is `null` unless the client passed one) |
 | `kyc:decision` | `POST /admin/kyc/:userId/decision` | the user whose KYC was decided | `{ status, reason }` (`status` is `"approved"` or `"rejected"`; `reason` is `null` for approvals) |
 | `notification:new` | a gift received / withdrawal status change / missed call inserts a row into `notifications` | the notified user | the full inserted notification row: `{ id, userId, type, title, body, read, createdAt }` |
+| `host:level-up` | a call billing tick, gift, or paid chat message pushes the host's lifetime-earned beans past the next 1,00,000 threshold (emitted after the transaction commits) | the host who levelled up | `{ level, previousLevel, maxPrices: { voiceRatePerMinutePaise, videoRatePerMinutePaise, messageRatePaise } }` |
 | `withdrawal:status` | a withdrawal request changes status (admin decision or payout resolution) | the requesting host | `{ withdrawalId, status }` |
 | `account:warning` | admin issues a moderation warning | the warned user | `{ message }` |
 | `broadcast:message` | admin's platform-wide broadcast-message tool | everyone (`io.emit`) | `{ id, title, message }` |

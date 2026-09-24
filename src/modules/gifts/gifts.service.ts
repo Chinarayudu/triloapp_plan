@@ -4,6 +4,7 @@ import { giftContextEnum, giftTransactions, gifts } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { getUserById } from "../users/users.service";
 import { getCurrentCommissionBasisPoints, getCurrentPaisePerBean, transferUserToHost } from "../wallet/wallet.service";
+import { notifyIfLevelledUp } from "../hosts/levels";
 
 type Gift = typeof gifts.$inferSelect;
 type GiftContext = (typeof giftContextEnum.enumValues)[number];
@@ -43,7 +44,7 @@ export async function sendGift(
   const netToHost = price - commissionAmount;
   const beans = Math.floor(netToHost / paisePerBeanSnapshot);
 
-  return db.transaction(async (tx) => {
+  const { giftTxn, transfer } = await db.transaction(async (tx) => {
     const [giftTxn] = await tx
       .insert(giftTransactions)
       .values({
@@ -59,7 +60,7 @@ export async function sendGift(
       })
       .returning();
 
-    await transferUserToHost(tx, {
+    const transfer = await transferUserToHost(tx, {
       userId: senderId,
       hostId: recipientId,
       amountPaise: price,
@@ -70,6 +71,9 @@ export async function sendGift(
       creditIdempotencyKey: `gift:${giftTxn.id}:credit`,
     });
 
-    return { ...giftTxn, gift };
+    return { giftTxn, transfer };
   });
+
+  notifyIfLevelledUp(recipientId, transfer.hostLifetimeBeansBefore, transfer.hostLifetimeBeansAfter);
+  return { ...giftTxn, gift };
 }

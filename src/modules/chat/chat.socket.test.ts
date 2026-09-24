@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../app";
 import * as pushLib from "../../lib/push";
 import { createSocketServer } from "../../realtime/socket";
-import { registerAndLogin } from "../../test/helpers";
+import { fundUserWallet, registerAndLogin } from "../../test/helpers";
 
 describe("Chat: live delivery and offline push", () => {
   let recipientSocket: Socket | undefined;
@@ -26,6 +26,9 @@ describe("Chat: live delivery and offline push", () => {
     const port = (httpServer.address() as AddressInfo).port;
 
     const user = await registerAndLogin(app, "user");
+
+
+    await fundUserWallet(app, user.accessToken, 10000); // user→host messages are paid (host levels)
     const host = await registerAndLogin(app, "host");
 
     recipientSocket = ioClient(`http://localhost:${port}`, { auth: { token: host.accessToken } });
@@ -49,6 +52,9 @@ describe("Chat: live delivery and offline push", () => {
     const pushSpy = vi.spyOn(pushLib, "sendPushNotification").mockResolvedValue();
 
     const user = await registerAndLogin(app, "user");
+
+
+    await fundUserWallet(app, user.accessToken, 10000); // user→host messages are paid (host levels)
     const host = await registerAndLogin(app, "host");
     // No socket connection for the host — createApp() here isn't even
     // attached to a socket server, so isUserConnected() will report false.

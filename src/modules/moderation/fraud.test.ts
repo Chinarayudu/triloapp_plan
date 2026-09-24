@@ -57,10 +57,11 @@ describe("Fraud: multi-accounting (BACKEND_PLAN.md §8)", () => {
 
 async function setupOnlineHost(app: Express, ratePerMinutePaise: number) {
   const host = await registerAndLogin(app, "host");
-  await request(app)
+  const profile = await request(app)
     .patch("/host/me/host-profile")
     .set("Authorization", `Bearer ${host.accessToken}`)
     .send({ ratePerMinutePaise });
+  expect(profile.status).toBe(200); // a rate above the host level cap is a 400 — fail here, not later
   await request(app).patch("/host/me/presence").set("Authorization", `Bearer ${host.accessToken}`).send({ isOnline: true });
   return host;
 }
