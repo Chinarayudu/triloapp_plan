@@ -46,7 +46,8 @@ server gives no signal that a refresh is due.
 
 | Event | Trigger | Target | Payload |
 |---|---|---|---|
-| `presence:update` | host toggles `PATCH /me/presence` | everyone (`io.emit`) | `{ hostId, isOnline }` |
+| `presence:update` | host toggles `PATCH /me/presence`, or their last socket disconnects (auto-offline) | everyone (`io.emit`) | `{ hostId, isOnline }` |
+| `host:busy` | a call is accepted (`isBusy: true`); an ongoing call ends — hang-up by either side, insufficient balance, or the stale-call reaper (`isBusy: false`). Ringing calls don't count | everyone (`io.emit`) | `{ hostId, isBusy }` — the initial value is `isBusy` on `GET /hosts` and `GET /hosts/:hostId`; show "Busy" over "Online" while true |
 | `call:incoming` | `POST /calls` | the called host | `{ callId, userId, callerName, ratePerMinutePaise }` |
 | `call:accepted` | `POST /calls/:id/accept` | the calling user | `{ callId, channelName }` |
 | `call:ended` | reject / end / ringing-timeout / insufficient-balance / stale-call reaper sweep | both parties (or the caller alone for a miss/reject) | `{ callId, status, totalAmountPaise, totalBeans, endReason? }` — there is no separate `call:missed`/`call:declined` event; those cases are `call:ended` with `status: "missed"` / `"rejected"` and an `endReason` |

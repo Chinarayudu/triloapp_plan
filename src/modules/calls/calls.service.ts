@@ -6,7 +6,7 @@ import { generateAgoraToken } from "../../lib/agoraToken";
 import { AppError } from "../../lib/errors";
 import { logger } from "../../lib/logger";
 import { sendPushNotification } from "../../lib/push";
-import { emitToUser, isUserConnected } from "../../realtime/socket";
+import { broadcastBusy, emitToUser, isUserConnected } from "../../realtime/socket";
 import { areBlocked } from "../moderation/blocks.service";
 import { checkCallCollusion } from "../moderation/fraud.service";
 import { createNotification } from "../notifications/notifications.service";
@@ -202,6 +202,7 @@ export async function acceptCall(
 
   const channelName = channelNameFor(callId);
   emitToUser(call.userId, "call:accepted", { callId, channelName });
+  broadcastBusy(hostId, true);
 
   const caller = await getUserById(call.userId);
   return {
@@ -255,6 +256,7 @@ export async function endCall(callId: string, requesterId: string): Promise<Call
       .set({ status: "completed", endedAt: new Date(), endReason, updatedAt: new Date() })
       .where(eq(calls.id, callId))
       .returning();
+    broadcastBusy(call.hostId, false);
     await checkCollusionSafely(call.hostId, call.userId);
   }
 
@@ -293,6 +295,7 @@ async function endCallForInsufficientBalance(call: CallRow): Promise<void> {
     .set({ status: "completed", endedAt: new Date(), endReason: "insufficient_balance", updatedAt: new Date() })
     .where(eq(calls.id, call.id))
     .returning();
+  broadcastBusy(call.hostId, false);
   await checkCollusionSafely(call.hostId, call.userId);
 
   const summary = {

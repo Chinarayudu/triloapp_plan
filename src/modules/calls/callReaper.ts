@@ -2,7 +2,7 @@ import { and, eq, lt } from "drizzle-orm";
 import { db } from "../../db/client";
 import { calls } from "../../db/schema";
 import { logger } from "../../lib/logger";
-import { emitToUser } from "../../realtime/socket";
+import { broadcastBusy, emitToUser } from "../../realtime/socket";
 import { checkCollusionSafely, RINGING_TIMEOUT_MS, TICK_INTERVAL_MS } from "./calls.service";
 import { clearRingingTimeout, stopBillingInterval } from "./callTimers";
 
@@ -52,6 +52,7 @@ export async function reapStaleCalls(): Promise<{ reapedRinging: number; reapedO
       .set({ status: "completed", endedAt: new Date(), endReason: "reaped_stale_ongoing", updatedAt: new Date() })
       .where(eq(calls.id, call.id))
       .returning();
+    broadcastBusy(call.hostId, false);
     await checkCollusionSafely(call.hostId, call.userId);
 
     const summary = {

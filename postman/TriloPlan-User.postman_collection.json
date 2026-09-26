@@ -785,7 +785,7 @@
                 }
               ]
             },
-            "description": "Home screen's All/New/Popular/Nearby/Following tabs all resolve to this with different sort/filter — sort also accepts rate_asc|rate_desc|online_first. Each host now includes rating, galleryCount (the photo-count badge on the card)."
+            "description": "Home screen's All/New/Popular/Nearby/Following tabs all resolve to this with different sort/filter — sort also accepts rate_asc|rate_desc|online_first. Each host now includes rating, galleryCount (the photo-count badge on the card), isOnline, and isBusy (true while the host is in an accepted call — show \"Busy\"; kept live by the host:busy socket event, see REALTIME_EVENTS.md)."
           }
         },
         {
@@ -840,7 +840,7 @@
                 "{{hostId}}"
               ]
             },
-            "description": "Creator Profile screen (previously had no backing endpoint — only the list view existed) — level, ratePerMinutePaise/voiceRatePerMinutePaise/messageRatePaise (the prices this user will actually be charged, set by the host level), avatarUrl, bio, talksAboutTags/hobbies/sports/languages, gallery, rating, followerCount, isFollowing, online status, derived age."
+            "description": "Creator Profile screen (previously had no backing endpoint — only the list view existed) — level, ratePerMinutePaise/voiceRatePerMinutePaise/messageRatePaise (the prices this user will actually be charged, set by the host level), avatarUrl, bio, talksAboutTags/hobbies/sports/languages, gallery, rating, followerCount, isFollowing, online status (isOnline) and isBusy (in an accepted call right now; live via the host:busy socket event), derived age."
           }
         },
         {

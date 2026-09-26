@@ -20,6 +20,22 @@ Copy this for each new entry, filled in, added to the top of the log below.
 
 ## Log
 
+### [2026-09-27] Host in a call still shows "Online" to other users
+
+**Symptom**: While a host is in an accepted call, every other user's User app still shows them as "Online" — tapping call then fails with `409 "Host is busy"`.
+**Root cause**: Missing feature, not a regression. The backend only ever modelled the host's online toggle (`presence.store.ts`); "busy" (BR-DIS-01, BACKEND_PLAN.md §4) was never implemented. `initiateCall` already knew (`getActiveCallForHost` → 409), but nothing exposed it to the host list/detail APIs or over the socket.
+**Affected files**: `src/realtime/socket.ts` (`broadcastBusy`), `src/modules/calls/calls.service.ts` (`acceptCall`, `endCall`, `endCallForInsufficientBalance`), `src/modules/calls/callReaper.ts` (stale-ongoing sweep), `src/modules/hosts/hosts.service.ts` (`isBusy` on list + detail), `src/modules/calls/calls.socket.test.ts` (new test), `REALTIME_EVENTS.md`, User Postman collection. User app: `src/lib/socket.js` (`useHostStatus`), `src/lib/normalize.js`, `Home.jsx`, `Creator.jsx`, `Chat.jsx`.
+**Fix**: "Busy" = an `ongoing` (accepted) call; ringing deliberately doesn't count. `isBusy` is read from the `calls` table (never a separate flag that could drift). A new `host:busy { hostId, isBusy }` event fires on accept (true) and at every place an ongoing call ends (false) — a new event rather than a new field on `presence:update`, so the Host/Admin apps' existing listeners are untouched. The User app shows an amber "Busy" dot/label over Online.
+**Call sites checked**: the only four transitions into/out of `ongoing` (`acceptCall`, `endCall`'s non-ringing branch, `endCallForInsufficientBalance`, `reapStaleCalls`' ongoing sweep); `rejectCall`/`expireRinging`/`endCall`'s ringing branch never involve an ongoing call. Emits are after the DB write and can't throw — no billing behavior changed. `listHosts` `onlineOnly`/`online_first` unchanged. `tsc` clean; calls + hosts suites 30/30 including the new test. Unrelated, pre-existing: 5 withdrawal tests fail with 400 with or without this change; the admin dashboard test is flaky (passes on rerun).
+
+### [2026-09-26] User app doesn't show a host going online until refresh
+
+**Symptom**: A host toggles online in the Host app; the User app keeps showing them offline. A refresh shows them online (Home catches up within its 15s poll; Creator profile and Chat header never do).
+**Root cause**: Frontend, not backend. `PATCH /me/presence` stores the flag and `io.emit`s `presence:update` to every socket correctly — but the User app (`user_app_dating`) never subscribed to `presence:update`. Each screen read `isOnline` once from REST (`normalizeHost`'s `online`) and never updated it; Home's comment even claimed the backend had no realtime push.
+**Affected files**: `user_app_dating` repo — `src/lib/socket.js` (fix), `src/pages/Home.jsx`, `src/pages/Creator.jsx`, `src/pages/Chat.jsx`. No backend change.
+**Fix**: `socket.js` attaches one `presence:update` listener when the socket is created (so it's live all session, not per-screen), keeps a `hostId → isOnline` map (cleared on (re)connect/logout, since missed events make it stale), and exports `useHostOnline(hostId, fetchedOnline)`. The three screens that render online status use it instead of the fetched `c.online`.
+**Call sites checked**: every `.online` read in the User app — Home `CardMedia` (also used by Search's `CreatorCard`), Creator, Chat `Conversation`; Search/Outcomes/CallRoom don't render status. `vite build` passes. Backend path (`hosts.routes.ts` → `broadcastPresence`) unchanged; its socket test couldn't run (test DB on :5433 down).
+
 ### [2026-09-24] User's beans after a recharge don't match the beans the package promised
 
 **Symptom**: A user buys a recharge package advertised as e.g. "₹199 → 1000 beans", but `GET /wallet` then shows `displayBeans: 995` (₹8999 "60000 beans" pack → 44995 shown).

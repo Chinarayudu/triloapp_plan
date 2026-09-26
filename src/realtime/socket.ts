@@ -94,6 +94,13 @@ export function broadcastPresence(hostId: string, isOnline: boolean): void {
   io?.emit("presence:update", { hostId, isOnline });
 }
 
+// Separate from presence:update rather than a new field on it, so existing
+// listeners (Host/Admin apps) keep receiving the exact payload they expect.
+// "Busy" = the host has an ongoing (accepted) call — ringing doesn't count.
+export function broadcastBusy(hostId: string, isBusy: boolean): void {
+  io?.emit("host:busy", { hostId, isBusy });
+}
+
 export function emitToUser(userId: string, event: string, payload: unknown): void {
   io?.to(`user:${userId}`).emit(event, payload);
 }

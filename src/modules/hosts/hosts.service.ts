@@ -1,6 +1,6 @@
 import { and, count, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { hostFollows, hostGalleryItems, hostProfiles, hostWallets, users } from "../../db/schema";
+import { calls, hostFollows, hostGalleryItems, hostProfiles, hostWallets, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { getHostRatingSummaries, getHostRatingSummary, RatingSummary } from "../calls/ratings.service";
 import { effectiveRate, getHostEffectivePrices, levelForLifetimeBeans, pricesForLevel } from "./levels";
@@ -29,9 +29,22 @@ export type HostListItem = {
   voiceRatePerMinutePaise: number;
   messageRatePaise: number;
   isOnline: boolean;
+  // In an ongoing (accepted) call right now — kept live by the host:busy event.
+  isBusy: boolean;
   rating: RatingSummary;
   galleryCount: number;
 };
+
+// Batched like getGalleryCounts below. Read from the calls table itself, not
+// a separate flag, so it can never drift from the call state machine.
+async function getBusyHostIds(hostIds: string[]): Promise<Set<string>> {
+  if (hostIds.length === 0) return new Set();
+  const rows = await db
+    .selectDistinct({ hostId: calls.hostId })
+    .from(calls)
+    .where(and(eq(calls.status, "ongoing"), or(...hostIds.map((id) => eq(calls.hostId, id)))));
+  return new Set(rows.map((r) => r.hostId));
+}
 
 // Batched — one GROUP BY query for every host in the list, same "merge into
 // an already-fetched list" pattern as ratings/presence in this module.
@@ -80,9 +93,10 @@ export async function listHosts(
     .where(and(...conditions));
 
   const onlineIds = new Set(listOnlineHostIds());
-  const [ratings, galleryCounts] = await Promise.all([
+  const [ratings, galleryCounts, busyIds] = await Promise.all([
     getHostRatingSummaries(rows.map((r) => r.id)),
     getGalleryCounts(rows.map((r) => r.id)),
+    getBusyHostIds(rows.map((r) => r.id)),
   ]);
   let hosts: HostListItem[] = rows.map((r) => {
     const level = levelForLifetimeBeans(r.lifetimeEarnedBeans);
@@ -98,6 +112,7 @@ export async function listHosts(
       voiceRatePerMinutePaise: effectiveRate(r.voiceRatePerMinutePaise, max.voiceRatePerMinutePaise),
       messageRatePaise: effectiveRate(r.messageRatePaise, max.messageRatePaise),
       isOnline: onlineIds.has(r.id),
+      isBusy: busyIds.has(r.id),
       rating: ratings.get(r.id) ?? { average: null, count: 0 },
       galleryCount: galleryCounts.get(r.id) ?? 0,
     };
@@ -172,6 +187,7 @@ export async function getHostDetail(hostId: string, viewerId: string) {
     messageRatePaise: prices.messageRatePaise,
     age: ageFromDob(dob),
     isOnline: listOnlineHostIds().includes(hostId),
+    isBusy: (await getBusyHostIds([hostId])).has(hostId),
     rating: await getHostRatingSummary(hostId),
     followerCount: Number(followerCount),
     isFollowing: Number(isFollowingCount) > 0,
