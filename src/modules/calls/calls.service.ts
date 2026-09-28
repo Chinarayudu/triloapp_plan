@@ -63,6 +63,23 @@ export async function getCallById(callId: string): Promise<CallRow | undefined> 
 // getHostHistory).
 export type CallListFilter = "all" | "video" | "voice" | "missed";
 
+// Call length bands shown next to a finished call (business rule):
+// under 4 min = bad, 4–10 min = good, over 10 min = excellent.
+const GOOD_CALL_MIN_SECONDS = 4 * 60;
+const EXCELLENT_CALL_MIN_SECONDS = 10 * 60;
+
+export type CallDurationQuality = "bad" | "good" | "excellent";
+
+// null for a call that never connected (missed/rejected) or is still going —
+// there's no finished length to judge yet.
+export function callDurationQuality(call: { startedAt: Date | null; endedAt: Date | null }): CallDurationQuality | null {
+  if (!call.startedAt || !call.endedAt) return null;
+  const seconds = (call.endedAt.getTime() - call.startedAt.getTime()) / 1000;
+  if (seconds > EXCELLENT_CALL_MIN_SECONDS) return "excellent";
+  if (seconds >= GOOD_CALL_MIN_SECONDS) return "good";
+  return "bad";
+}
+
 function callListWhere(ownerColumn: typeof calls.userId | typeof calls.hostId, ownerId: string, filter: CallListFilter) {
   const conditions = [eq(ownerColumn, ownerId)];
   if (filter === "video" || filter === "voice") conditions.push(eq(calls.type, filter));
@@ -89,7 +106,13 @@ export async function listCallsForUser(userId: string, filter: CallListFilter, p
       .offset((page - 1) * pageSize),
     countCalls(where),
   ]);
-  return { calls: rows, total, page, pageSize, hasMore: page * pageSize < total };
+  return {
+    calls: rows.map((c) => ({ ...c, durationQuality: callDurationQuality(c) })),
+    total,
+    page,
+    pageSize,
+    hasMore: page * pageSize < total,
+  };
 }
 
 // Calls screen (Host app). summary covers every call matching the filter,
@@ -130,6 +153,7 @@ export async function listCallsForHost(hostId: string, filter: CallListFilter, p
     callerName: c.callerName ?? "Unknown",
     durationSeconds: c.startedAt && c.endedAt ? Math.floor((c.endedAt.getTime() - c.startedAt.getTime()) / 1000) : 0,
     earnedPaise: c.totalBeans * paisePerBean,
+    durationQuality: callDurationQuality(c),
   }));
   return {
     calls: items,

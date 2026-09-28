@@ -1384,7 +1384,8 @@
                 "calls",
                 "{{callId}}"
               ]
-            }
+            },
+            "description": "durationQuality: \"bad\" (under 4 min), \"good\" (4–10 min) or \"excellent\" (over 10 min) for a finished call; null if it never connected or is still going."
           }
         },
         {
@@ -1530,7 +1531,7 @@
                 }
               ]
             },
-            "description": "Past Calls screen. Returns { calls, total, page, pageSize, hasMore }; each call is the raw call record. filter: all (default) | video | voice | missed. page starts at 1; pageSize max 50 (default 20). Newest first. hasMore tells you whether to load the next page."
+            "description": "Past Calls screen. Returns { calls, total, page, pageSize, hasMore }; each call is the raw call record. filter: all (default) | video | voice | missed. page starts at 1; pageSize max 50 (default 20). Newest first. hasMore tells you whether to load the next page. durationQuality: \"bad\" (under 4 min), \"good\" (4–10 min) or \"excellent\" (over 10 min) for a finished call; null if it never connected or is still going."
           },
           "event": [
             {

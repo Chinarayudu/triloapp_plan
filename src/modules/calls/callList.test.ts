@@ -5,6 +5,7 @@ import { db } from "../../db/client";
 import { calls } from "../../db/schema";
 import { registerAndLogin } from "../../test/helpers";
 import { getCurrentPaisePerBean } from "../wallet/wallet.service";
+import { callDurationQuality } from "./calls.service";
 
 describe("Call lists (paginated)", () => {
   it("pages a host's and a user's calls in the database, newest first, with filters and all-pages totals", async () => {
@@ -44,7 +45,7 @@ describe("Call lists (paginated)", () => {
     expect(page1.body.calls).toHaveLength(10);
     // Newest first.
     expect(page1.body.calls[0].createdAt).toBe(new Date(base + 24 * 60_000).toISOString());
-    expect(page1.body.calls[0]).toMatchObject({ userId: user.user.id, callerName: expect.any(String), durationSeconds: 30, earnedPaise: 700 * ppb });
+    expect(page1.body.calls[0]).toMatchObject({ userId: user.user.id, callerName: expect.any(String), durationSeconds: 30, earnedPaise: 700 * ppb, durationQuality: "bad" });
     // Totals cover every page, not just this one.
     expect(page1.body.summary).toEqual({ totalCalls: 25, earnedPaise: 20 * 700 * ppb });
 
@@ -58,6 +59,7 @@ describe("Call lists (paginated)", () => {
     expect(missed.body.total).toBe(5);
     expect(missed.body.calls.every((c: { status: string }) => c.status === "missed")).toBe(true);
     expect(missed.body.summary.earnedPaise).toBe(0);
+    expect(missed.body.calls.every((c: { durationQuality: string | null }) => c.durationQuality === null)).toBe(true);
 
     const voice = await request(app).get("/host/me/calls?filter=voice").set(hostAuth);
     expect(voice.body.total).toBe(12);
@@ -68,11 +70,25 @@ describe("Call lists (paginated)", () => {
     expect(userVideo.status).toBe(200);
     expect(userVideo.body).toMatchObject({ total: 13, hasMore: false });
     expect(userVideo.body.calls.every((c: { type: string }) => c.type === "video")).toBe(true);
+    expect(userVideo.body.calls.find((c: { status: string }) => c.status === "completed").durationQuality).toBe("bad");
 
     const stranger = await request(app).get("/host/me/calls").set("Authorization", `Bearer ${otherHost.accessToken}`);
     expect(stranger.body.total).toBe(0);
 
     const badFilter = await request(app).get("/host/me/calls?filter=nope").set(hostAuth);
     expect(badFilter.status).toBe(400);
+  });
+
+  it("grades a finished call by length: under 4 min bad, 4–10 min good, over 10 min excellent", () => {
+    const start = new Date("2026-09-01T10:00:00Z");
+    const endedAfter = (seconds: number) => ({ startedAt: start, endedAt: new Date(start.getTime() + seconds * 1000) });
+
+    expect(callDurationQuality(endedAfter(3 * 60 + 59))).toBe("bad");
+    expect(callDurationQuality(endedAfter(4 * 60))).toBe("good");
+    expect(callDurationQuality(endedAfter(10 * 60))).toBe("good");
+    expect(callDurationQuality(endedAfter(10 * 60 + 1))).toBe("excellent");
+    // Never connected, or still in progress.
+    expect(callDurationQuality({ startedAt: null, endedAt: start })).toBeNull();
+    expect(callDurationQuality({ startedAt: start, endedAt: null })).toBeNull();
   });
 });

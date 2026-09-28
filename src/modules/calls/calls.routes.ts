@@ -6,6 +6,7 @@ import { perUserRateLimit } from "../../middleware/rateLimit";
 import { validateBody } from "../../middleware/validate";
 import {
   acceptCall,
+  callDurationQuality,
   endCall,
   getCallById,
   getCallParticipantNames,
@@ -94,7 +95,7 @@ callsRouter.get("/calls/:id", requireAuth, async (req, res, next) => {
       throw new AppError(403, "Not your call");
     }
     const { callerName, hostName } = await getCallParticipantNames(call.userId, call.hostId);
-    res.json({ ...call, secureMode: true, callerName, hostName });
+    res.json({ ...call, secureMode: true, callerName, hostName, durationQuality: callDurationQuality(call) });
   } catch (err) {
     next(err);
   }
