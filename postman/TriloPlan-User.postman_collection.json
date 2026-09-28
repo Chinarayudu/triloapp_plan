@@ -1506,7 +1506,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/user/me/calls?page=1&pageSize=20",
+              "raw": "{{baseUrl}}/user/me/calls?filter=all&page=1&pageSize=20",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -1517,6 +1517,10 @@
               ],
               "query": [
                 {
+                  "key": "filter",
+                  "value": "all"
+                },
+                {
                   "key": "page",
                   "value": "1"
                 },
@@ -1526,8 +1530,21 @@
                 }
               ]
             },
-            "description": "Past Calls screen (previously had no backing endpoint — only the host side had an equivalent)."
-          }
+            "description": "Past Calls screen. Returns { calls, total, page, pageSize, hasMore }; each call is the raw call record. filter: all (default) | video | voice | missed. page starts at 1; pageSize max 50 (default 20). Newest first. hasMore tells you whether to load the next page."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('paginated', () => { pm.expect(b.calls).to.be.an('array'); pm.expect(b.total).to.be.a('number'); pm.expect(b.hasMore).to.be.a('boolean'); });"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

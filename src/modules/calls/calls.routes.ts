@@ -10,6 +10,7 @@ import {
   getCallById,
   getCallParticipantNames,
   initiateCall,
+  listCallsForHost,
   listCallsForUser,
   rejectCall,
   relayCallSignal,
@@ -59,12 +60,14 @@ callsRouter.post(
 );
 
 const listCallsQuerySchema = z.object({
+  filter: z.enum(["all", "video", "voice", "missed"]).default("all"),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(50).default(20),
 });
 
-// Past Calls screen (User app design follow-up).
-callsRouter.get("/me/calls", requireAuth, requireRole("user"), async (req, res, next) => {
+// Past Calls screen (User app) and Calls screen (Host app) — each role sees
+// the calls it's a party to.
+callsRouter.get("/me/calls", requireAuth, requireRole("user", "host"), async (req, res, next) => {
   const parsed = listCallsQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     next(new AppError(400, parsed.error.issues.map((i) => i.message).join(", ")));
@@ -72,8 +75,12 @@ callsRouter.get("/me/calls", requireAuth, requireRole("user"), async (req, res, 
   }
 
   try {
-    const { page, pageSize } = parsed.data;
-    res.json(await listCallsForUser(req.user!.sub, page, pageSize));
+    const { filter, page, pageSize } = parsed.data;
+    if (req.user!.role === "host") {
+      res.json(await listCallsForHost(req.user!.sub, filter, page, pageSize));
+    } else {
+      res.json(await listCallsForUser(req.user!.sub, filter, page, pageSize));
+    }
   } catch (err) {
     next(err);
   }

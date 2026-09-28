@@ -1,7 +1,7 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { env } from "../../config/env";
 import { db } from "../../db/client";
-import { callBillingTicks, calls } from "../../db/schema";
+import { callBillingTicks, calls, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { logger } from "../../lib/logger";
 import { sendPushNotification } from "../../lib/push";
@@ -61,14 +61,84 @@ export async function getCallById(callId: string): Promise<CallRow | undefined> 
 // User app design follow-up's Past Calls screen — this role of "list my
 // calls" previously only existed on the host side (earnings.service.ts's
 // getHostHistory).
-export async function listCallsForUser(
-  userId: string,
-  page: number,
-  pageSize: number,
-): Promise<{ calls: CallRow[]; total: number; page: number; pageSize: number }> {
-  const rows = await db.select().from(calls).where(eq(calls.userId, userId)).orderBy(desc(calls.createdAt));
-  const start = (page - 1) * pageSize;
-  return { calls: rows.slice(start, start + pageSize), total: rows.length, page, pageSize };
+export type CallListFilter = "all" | "video" | "voice" | "missed";
+
+function callListWhere(ownerColumn: typeof calls.userId | typeof calls.hostId, ownerId: string, filter: CallListFilter) {
+  const conditions = [eq(ownerColumn, ownerId)];
+  if (filter === "video" || filter === "voice") conditions.push(eq(calls.type, filter));
+  if (filter === "missed") conditions.push(eq(calls.status, "missed"));
+  return and(...conditions);
+}
+
+async function countCalls(where: ReturnType<typeof callListWhere>) {
+  const [row] = await db.select({ total: sql<string>`count(*)` }).from(calls).where(where);
+  return Number(row?.total ?? 0);
+}
+
+// Past Calls screen (User app). Paged in the database, newest first; the
+// response shape predates filters and is kept as-is for the User app.
+export async function listCallsForUser(userId: string, filter: CallListFilter, page: number, pageSize: number) {
+  const where = callListWhere(calls.userId, userId, filter);
+  const [rows, total] = await Promise.all([
+    db
+      .select()
+      .from(calls)
+      .where(where)
+      .orderBy(desc(calls.createdAt), desc(calls.id))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    countCalls(where),
+  ]);
+  return { calls: rows, total, page, pageSize, hasMore: page * pageSize < total };
+}
+
+// Calls screen (Host app). summary covers every call matching the filter,
+// not just this page, so the screen's totals don't change as pages load.
+// earnedPaise is the host's share (beans, after commission) at the current
+// rate — the same basis as the dashboard and daily report.
+export async function listCallsForHost(hostId: string, filter: CallListFilter, page: number, pageSize: number) {
+  const where = callListWhere(calls.hostId, hostId, filter);
+  const [rows, total, [sums], paisePerBean] = await Promise.all([
+    db
+      .select({
+        id: calls.id,
+        type: calls.type,
+        status: calls.status,
+        userId: calls.userId,
+        callerName: users.name,
+        ratePerMinutePaiseSnapshot: calls.ratePerMinutePaiseSnapshot,
+        startedAt: calls.startedAt,
+        endedAt: calls.endedAt,
+        endReason: calls.endReason,
+        totalAmountPaise: calls.totalAmountPaise,
+        totalBeans: calls.totalBeans,
+        createdAt: calls.createdAt,
+      })
+      .from(calls)
+      .innerJoin(users, eq(users.id, calls.userId))
+      .where(where)
+      .orderBy(desc(calls.createdAt), desc(calls.id))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    countCalls(where),
+    db.select({ beans: sql<string>`coalesce(sum(${calls.totalBeans}), 0)` }).from(calls).where(where),
+    getCurrentPaisePerBean(),
+  ]);
+
+  const items = rows.map((c) => ({
+    ...c,
+    callerName: c.callerName ?? "Unknown",
+    durationSeconds: c.startedAt && c.endedAt ? Math.floor((c.endedAt.getTime() - c.startedAt.getTime()) / 1000) : 0,
+    earnedPaise: c.totalBeans * paisePerBean,
+  }));
+  return {
+    calls: items,
+    total,
+    page,
+    pageSize,
+    hasMore: page * pageSize < total,
+    summary: { totalCalls: total, earnedPaise: Number(sums?.beans ?? 0) * paisePerBean },
+  };
 }
 
 async function getActiveCallForUser(userId: string): Promise<CallRow | undefined> {

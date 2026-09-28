@@ -1366,6 +1366,59 @@
             },
             "description": "\"Rate this call\" stars on the call-ended screen. Either participant can rate the other once."
           }
+        },
+        {
+          "name": "6. List My Calls",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('paginated', () => { pm.expect(b.calls).to.be.an('array'); pm.expect(b.total).to.be.a('number'); pm.expect(b.hasMore).to.be.a('boolean'); });",
+                  "pm.test('summary', () => pm.expect(b.summary.totalCalls).to.eql(b.total));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/me/calls?filter=all&page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "calls"
+              ],
+              "query": [
+                {
+                  "key": "filter",
+                  "value": "all"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Calls screen. Each item: id, type, status, userId, callerName, ratePerMinutePaiseSnapshot, startedAt, endedAt, endReason, durationSeconds, totalAmountPaise (what the user paid), totalBeans, earnedPaise (the host's share), createdAt. summary { totalCalls, earnedPaise } covers every call matching the filter, not just this page. filter: all (default) | video | voice | missed. page starts at 1; pageSize max 50 (default 20). Newest first. hasMore tells you whether to load the next page."
+          }
         }
       ]
     },
