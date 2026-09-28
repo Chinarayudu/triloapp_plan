@@ -6,7 +6,7 @@ Three client apps (built by others), one backend to serve all three:
 |---|---|---|
 | User App | `USER` | recharge wallet, browse available hosts, video call (per-minute billed), chat, gift, watch/join live broadcasts |
 | Host App ("girls") | `HOST` | go online/offline, receive/accept calls, chat, live broadcast, earnings (beans), withdraw, send gift-request popups |
-| Admin App | `ADMIN` / `SUB_ADMIN` | KYC, pricing/commission config, withdrawal approval, moderation, 18+ toggle, analytics |
+| Admin App | `ADMIN` / `SUB_ADMIN` | KYC, pricing/commission config, withdrawal approval, moderation, analytics |
 
 **A note on the paths below**: every non-admin endpoint mentioned in this document (`/me`, `/calls`, `/wallet`, `/hosts`, `/gifts`, `/chat`, `/live`, `/withdrawals`, `/moderation`, `/grievances`, `/vip`, `/auth/otp/...`, `/auth/token/refresh`, `/auth/logout`, etc.) is namespaced by app — the real path is `/user/...` or `/host/...` (API-design follow-up: the same route logic is mounted at both prefixes, so a User-app and Host-app request to what's conceptually "the same" endpoint are still distinguishable in logs). `/admin/...` paths are shown with their real prefix already, and admin's own login is `POST /admin/auth/login` (not `/auth/admin/login`). This doc uses the bare/shorthand form throughout for readability — see `postman/TriloPlan-Host.postman_collection.json` / `-User.../ -Admin...` or `src/app.ts` for the exact, real paths.
 
@@ -108,16 +108,13 @@ Result: every recharge, for every user, completes with zero backend/admin interv
 
 ---
 
-## 3. ⚠️ Decision that affects everything else: payment gateway for adult content
+## 3. Payment gateway — standard merchant account (no 18+ content)
 
-This needs to be resolved before building the payment module, not after. Mainstream processors (Stripe, PayPal, and most standard Razorpay/Cashfree/PayU merchant categories) **prohibit or heavily restrict adult/webcam content** in their terms — even with a toggleable 18+ flag, if any content on the platform can be adult-rated, you're generally in "high-risk merchant" category. Getting a standard account and then having it frozen mid-operation after volume picks up is a common failure mode for platforms like this.
+**18+ / adult content is strictly prohibited on this platform** — there is no admin toggle, no adult-flagged broadcasts, and no age-gated content tier. Any such content is a moderation violation (report → admin review → warn/suspend/ban, BR-MOD-04/05), not a mode.
 
-Practical paths:
-- Apply as a **high-risk merchant** with processors that explicitly support adult/cam platforms (there are specialized high-risk payment processors for this vertical — regional options vary by country).
-- Or structure recharge as a generic "digital goods/coins" purchase and keep the adult toggle content-side only, understanding this doesn't eliminate the ToS risk, just reduces how it looks on paper.
-- This is a legal/business decision as much as a technical one — worth a conversation with a payments-savvy lawyer before committing to a specific gateway integration.
+This keeps payments out of the "high-risk merchant" category entirely: a standard India merchant account with a mainstream gateway works. **Cashfree** is the current choice — Payment Gateway for recharge (Orders API + hosted checkout SDK + signed webhooks + order-status API for reconciliation, §2) and Cashfree Payouts for host withdrawals (a separate product with its own onboarding/keys). Razorpay/RazorpayX remains a drop-in alternative; the flow in §2 is identical for both.
 
-I'll assume **India-first (Razorpay/Cashfree high-risk tier)** unless you tell me otherwise, since per-minute cam billing + beans withdrawal is a very India/SEA-common business model — but flag this early since it changes which SDK the payment module is built against.
+Onboarding note: paid per-minute video chat with hosts can still draw extra KYB review (it resembles paid dating/friendship apps). Describe the business plainly — live video chat + virtual gifting, 18+ content prohibited, active moderation — and have the content policy/terms live on the website before applying.
 
 ---
 
@@ -130,6 +127,7 @@ I'll assume **India-first (Razorpay/Cashfree high-risk tier)** unless you tell m
   - **Fallback**: ZEGOCLOUD — explicitly targets this social/live-streaming/dating niche and tends to be cheaper at volume, smaller track record. Worth a pricing comparison once real call-minute volume estimates exist, but not worth blocking on now.
   - **Ruled out**: Twilio Video — Twilio sunset its Programmable Video product, so it's not a viable option regardless of fit.
 - Our backend owns **signaling and business logic**, not media: call state machine (`REQUESTED → RINGING → ACCEPTED → ONGOING → COMPLETED/REJECTED/MISSED/FAILED`), ringing/timeout, billing hooks on connect/disconnect events from Agora's server-side callbacks/webhooks. Agora's server SDK issues short-lived join tokens per call; the backend never touches raw media.
+- **Switchable low-cost alternative — "p2p" media provider (built)**: 1:1 calls can instead run over plain browser WebRTC directly between the two devices, with a Cloudflare TURN relay (`CLOUDFLARE_TURN_KEY_ID`/`CLOUDFLARE_TURN_API_TOKEN`, billed per GB, first 1,000 GB/month free) only for the ~15-20% of networks that block a direct connection — near-zero media cost versus Agora's per-participant-minute billing. Chosen by admins at runtime, no deploy: `GET/POST /admin/config/call-media` (`{ provider: "agora" | "p2p" }`, finance permission, audit-logged, versioned like `commission_configs`). Each call snapshots the active provider (`calls.media_provider`), so switching never affects a ringing/ongoing call. Billing, ringing, the state machine and the busy status are identical for both — only how the apps exchange media differs. For p2p, `POST /calls` and `/calls/:id/accept` return `iceServers` instead of `agoraToken`, and the apps exchange WebRTC setup via `POST /calls/:id/signal` → `call:signal` (REALTIME_EVENTS.md). Trade-off: Agora's network handles poor mobile connections more gracefully than a direct connection — validate p2p on real 4G devices before switching production over. Live broadcasting stays on Agora.
 
 ### Live broadcasting (one host → many viewers) — built (Phase 7)
 - Same vendor as calls (Agora) — the host's join token is `PUBLISHER` role, a viewer's is `SUBSCRIBER` (read-only), both minted by `generateAgoraToken`'s now-parameterized role — one CPaaS integration, not a separate vendor, and viewers can't accidentally publish.
@@ -151,17 +149,14 @@ I'll assume **India-first (Razorpay/Cashfree high-risk tier)** unless you tell m
 
 ---
 
-## 5. Screenshot/recording restriction & 18+ toggle — built (Phase 10)
+## 5. Screenshot/recording restriction — built (Phase 10)
 
 **Screenshot/screen-recording prevention is fundamentally a client-side control; the backend cannot enforce it, only configure and react to it.**
 - Android: client sets `FLAG_SECURE` on the sensitive activity/view — this is the actual block, and it's a frontend task.
 - iOS: there is **no OS-level API to block screen recording**. The best available is detecting `UIScreen.capturedDidChangeNotification` and reacting (blur the view, end the call) — again frontend-side.
-- Backend's role, built: a **`secureMode` flag** on call and live-broadcast-join responses the client reads and enforces (`calls.routes.ts`, `live.routes.ts`) — `true` unconditionally for 1:1 calls (this whole platform is treated as sensitive-by-default, §3), and per-broadcast (`isAdultContent`) for live. `POST /moderation/capture-event` (`moderation.routes.ts`) is what the client calls when it detects a capture attempt — logs it (`capture_events`), and past a threshold (4 events) auto-**files a moderation report** for a human admin to review (`moderationReports`, reused from Phase 9), rather than auto-suspending: capture detection can false-positive (e.g. a legitimate OS screenshot on some Android versions), so the actual suspend/ban decision stays an explicit human action, same as any other report (BR-MOD-05). `GET /admin/capture-events` gives an admin the raw log underneath that.
+- Backend's role, built: a **`secureMode` flag** on call and live-broadcast-join responses the client reads and enforces (`calls.routes.ts`, `live.routes.ts`) — `true` unconditionally for both 1:1 calls and live broadcasts (start and join) — hosts' faces/voices are treated as sensitive-by-default even though no 18+ content is allowed (§3). `POST /moderation/capture-event` (`moderation.routes.ts`) is what the client calls when it detects a capture attempt — logs it (`capture_events`), and past a threshold (4 events) auto-**files a moderation report** for a human admin to review (`moderationReports`, reused from Phase 9), rather than auto-suspending: capture detection can false-positive (e.g. a legitimate OS screenshot on some Android versions), so the actual suspend/ban decision stays an explicit human action, same as any other report (BR-MOD-05). `GET /admin/capture-events` gives an admin the raw log underneath that.
 
-**18+ toggle — built**:
-- `adult_mode_configs.enabled` (`admin.service.ts`) is a global feature flag, versioned the same "insert a new row" way as commission/beans-rate/withdrawal config — `GET/POST /admin/config/adult-mode` (moderation permission, not finance: this is a content-policy lever). `GET /live/adult-mode` is the public read any authenticated role can check.
-- Scoped to content, not just global: `live_broadcasts.isAdultContent` (BR-MOD-01's "and/or scoped to specific broadcasts") — a host can only set it on `POST /live/broadcasts` if the global toggle is currently on *and* the host is age-verified; it then stays true for that broadcast's lifetime regardless of a later global flip (a later admin change never retroactively re-opens already-gated content).
-- **Age verification (BR-MOD-02)** reuses Phase 9's KYC approval rather than a self-declared checkbox: `decideKyc`'s KYC approval sets `users.ageVerified = true` when a `dob` is on file (BR-ACC-04) — the same real human-reviewed document check as the rest of KYC, not a separate flow. `listLiveBroadcasts` filters adult broadcasts out of the discovery list for unverified viewers, and `joinBroadcast` gates the actual join (the point that mints the Agora subscriber token) the same way — two enforcement points, not one, so an unverified viewer can neither discover nor access gated content.
+**18+ toggle — removed.** Built in Phase 10, then dropped when the platform moved to prohibiting 18+ content outright (§3): `adult_mode_configs`, `live_broadcasts.is_adult_content`, `GET/POST /admin/config/adult-mode` and `GET /live/adult-mode` are gone (migration `0022_drop_adult_mode`). `users.ageVerified` is still recorded (KYC approval with a `dob` on file, or `POST /me/verify-age`) but no longer gates any content.
 
 ---
 
@@ -186,7 +181,7 @@ GiftRequest     (host_id, user_id, context, status)
 CommissionConfig(scope[GLOBAL|HOST], percentage, effective_from)
 BeansEarnConfig (currency_per_bean, effective_from)          -- rate used when crediting hosts
 WithdrawalSlab  (min_beans, max_beans, currency_per_bean, effective_from)  -- tiered payout rates
-AdminConfig     (adult_mode_enabled, feature flags...)
+AdminConfig     (feature flags...)
 ModerationFlag  (reporter_id, target_type, target_id, reason, status)
 AuditLog        (admin_id, action, target, timestamp)
 ```
@@ -210,7 +205,7 @@ Note the `_snapshot` fields on `CallSession` — rates, commission %, and the be
 - **Horizontal scaling of realtime**: WebSocket/signaling nodes need a shared adapter (Redis) for pub/sub across instances — a single-node assumption breaks the moment you need 2 app servers. Still not built — Redis isn't provisioned anywhere in this repo yet (`tech-stack/TECH_STACK.md` scopes it, `presence.store.ts`/`callTimers.ts` are deliberately in-memory placeholders for it), and introducing it now, before there's an actual second instance to serve, would be infrastructure with no current consumer. Revisit when horizontal scaling is actually on the table.
 - **Load testing / security review**: a local sanity check (25 concurrent calls, real 10s billing ticks, verified against `GET /admin/reconciliation`) confirmed the billing-tick path handles modest concurrency correctly on a single instance — that is **not** a substitute for a real load test against defined targets on a staging environment, which doesn't exist yet. A security-focused review pass of Phases 9–11 (RBAC, money-movement paths, SQL usage, IDOR) found no high-confidence findings.
 - **RBAC for admin** — built (Phase 9, §1 above): separate `SUB_ADMIN` permission sets (finance/withdrawal approval vs moderation vs read-only analytics) rather than one flat admin role, with an audit log of every admin action — this is a money-and-content platform, every privileged action should be attributable.
-- **Legal review**: adult content + real-money withdrawal + India-or-wherever jurisdiction is a genuine compliance surface (payment processor terms, data retention, age verification, possibly local licensing) — worth a short legal consult before the payment module is finalized, not after launch.
+- **Legal review**: real-money withdrawal + India-or-wherever jurisdiction is a genuine compliance surface (payment processor terms, data retention, age verification, possibly local licensing) — worth a short legal consult before the payment module is finalized, not after launch.
 
 ### Gap-closure pass — built
 
@@ -231,10 +226,9 @@ Found by reviewing the admin web app's Figma designs screen-by-screen against th
 - **Users & Hosts roster + account detail screens (new)** — `GET /admin/users`, `/admin/hosts` (roster, with last-active derived from login history) and `GET /admin/users/:id`, `/admin/hosts/:id` (detail: profile, last-20 calls/gifts/chats involving the account from either side merged into one activity feed, moderation reports filed against them) — the admin design's account-detail screens had no backing endpoint before this pass.
 - **Combined Dismiss/Warn/Suspend/Ban (BR-MOD-05)** — `POST /admin/moderation/:id/resolve` gained an optional `accountAction` (`warn`/`suspend`/`ban`) alongside `action` (`resolved`/`dismissed`), matching the design's single combined choice on the report screen instead of two separate requests. Only valid when the report targets an account, not content — validated before the report is resolved, so a bad `accountAction` never leaves the report resolved without the requested consequence applied. `warnAccount` (new) sends a socket notification + push fallback, same pattern as everything else in `realtime/socket.ts`.
 - **Dashboard: period scoping, richer numbers (BR-ADM-01)** — `GET /admin/dashboard` gained `?from=&to=` (defaults to the last 30 days), `activeUsers`/`activeHosts` alongside the existing all-time totals, a daily `series` (revenue + call-minutes, for the design's chart), and `topEarningHosts` recomputed as *period-scoped earnings* (completed-call revenue + gifts received, within the window) rather than lifetime bean balance — the old version stayed "top earner" forever even after a host withdrew everything.
-- **Audit log filters + previous-value tracking (BR-ADM-04)** — `GET /admin/audit-log` gained `adminId`/`from`/`to` filters. Every config-change audit entry (commission/beans-rate/withdrawal-policy/adult-mode) now records `{previous, new}` instead of just the new value, so the design's audit screen can show what actually changed, not just the end state.
-- **Live broadcast admin monitoring (new)** — `GET /admin/live-broadcasts` (every currently-live broadcast, not age-gated, with host identity + live viewer count) and `POST /admin/live-broadcasts/:id/end` (force-end any host's broadcast for moderation, notifies the room over the socket, audit-logged) — the design's live-monitoring screen had no backing endpoint before this pass.
+- **Audit log filters + previous-value tracking (BR-ADM-04)** — `GET /admin/audit-log` gained `adminId`/`from`/`to` filters. Every config-change audit entry (commission/beans-rate/withdrawal-policy) now records `{previous, new}` instead of just the new value, so the design's audit screen can show what actually changed, not just the end state.
+- **Live broadcast admin monitoring (new)** — `GET /admin/live-broadcasts` (every currently-live broadcast, with host identity + live viewer count) and `POST /admin/live-broadcasts/:id/end` (force-end any host's broadcast for moderation, notifies the room over the socket, audit-logged) — the design's live-monitoring screen had no backing endpoint before this pass.
 - **Broadcast messaging (new)** — `broadcastMessages` table, `GET/POST /admin/broadcast-messages` — a titled message to all Users, all Hosts, or both; delivered the same way as every other notification here (socket to whoever's connected, push fallback for whoever isn't), no queue.
-- **18+ toggle restricted to full ADMIN only** — the design labels this screen "Accessible to Super Admin Only"; `GET/POST /admin/config/adult-mode` moved from `requireAdminPermission("moderation")` (any sub-admin with that permission) to `requireRole("admin")` (full admin, no sub-admin regardless of permissions).
 - **Gift pricing stays real currency** — the design's mockup prices gifts in "beans," but beans are the *host's* internal earnings currency (BACKEND_PLAN.md §1); gifts are purchased by Users in real money. Confirmed with the business and kept as-is (paise) rather than introducing a second, conflicting meaning for "beans" — the design's labeling doesn't reflect the actual money model.
 - Postman collection (`postman/TriloPlan-Backend.postman_collection.json`) updated for every endpoint above plus every changed request/response shape, and verified end-to-end with `newman` against a live server on a freshly migrated+seeded database: 108/108 requests, 28/28 assertions passing.
 
@@ -303,6 +297,12 @@ Business rules are in BRD.md's BR-DIS-03 / BR-CHAT-03 amendments. How it's built
 - **Host app**: `GET /host/me/level` (level, progress, current vs. max prices, full 20-level table); `PATCH /host/me/host-profile` rejects a rate above the level max (400) and accepts `null` to follow the level price; `host:level-up` socket event after the earning transaction commits.
 - **Not done yet**: the level formula is code constants, not an admin-editable table (BR-ADM-02 asks for pricing levers without a deployment) — a follow-up if the business wants to tune it live. In-call chat messages are charged like any other user→host message.
 
+### Host daily report — built (2026-09-28)
+
+- **Online sessions**: `host_online_sessions` (migration `0024`) records every online period. `hosts/onlineSessions.service.ts` (`markHostOnline`/`markHostOffline`) is the only way presence changes, so the in-memory flag and the history can't disagree: the `PATCH /me/presence` toggle and the last socket disconnecting both go through it. `hosts/onlineSessionSweep.ts` runs at boot and every 30s: it bumps `last_seen_at` for hosts still connected, closes a session at `last_seen_at` once a host has been unreachable for 60s, and closes sessions left open by a restart. There is no app heartbeat; Socket.IO ping/pong already detects a killed app in about 45s.
+- **`GET /me/stats/daily?date&tz`** and **`GET /me/stats/daily-summary?from&to&tz`** (`wallet/dailyStats.service.ts`, max 31 days, zero days included). Online time is presence sessions ∪ answered calls ∪ live broadcasts, merged and split at the host's local midnight. Earnings use the same basis as the dashboard's `todayEarningsPaise`: the host's share (beans credited, after commission) at the current paise-per-bean rate. Paid chat messages and adjustments are listed under `other`, and there's no bonus system yet. `dailyGoalSeconds` is a constant of 6 hours.
+- **Day boundaries are IST now, not UTC**: the dashboard's "today", the earnings summary's month and last-7-days, and plain `YYYY-MM-DD` `from`/`to` on `/me/earnings/breakdown` and `/statement` (with `to` inclusive). `lib/dayBounds.ts` does the time-zone maths using only `Intl`.
+
 ---
 
 ## Open decisions before implementation starts
@@ -311,4 +311,4 @@ Business rules are in BRD.md's BR-DIS-03 / BR-CHAT-03 amendments. How it's built
 2. ~~Managed CPaaS vs self-hosted video~~ — **decided: Agora** for both 1:1 calls and live broadcasting (§4); ZEGOCLOUD as fallback if pricing doesn't work out. Chat (1:1 and live) is self-built, not vendor-provided.
 3. ~~Is 1:1 chat free or charged per-message?~~ — **decided (default): free.** Built free-by-default in Phase 5 since it wasn't resolved in time to block the build; revisit if the business wants it metered. Per-message billing would reuse the exact wallet-debit pattern already used for calls (`wallet.service.ts`), not a new mechanism.
 4. Withdrawal cadence/minimum and auto-approval threshold for hosts.
-5. Who owns legal/payment-gateway approval for the adult-content angle — this can gate the whole payments build.
+5. ~~Who owns legal/payment-gateway approval for the adult-content angle~~ — **resolved: 18+ content is prohibited**, so a standard (non-high-risk) merchant account applies (§3).

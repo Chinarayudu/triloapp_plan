@@ -77,6 +77,7 @@ giftsRouter.post(
 const requestGiftSchema = z.object({
   userId: z.string().uuid(),
   suggestedGiftId: z.string().uuid().optional(),
+  note: z.string().trim().max(140).optional(),
 });
 
 giftsRouter.post(
@@ -86,7 +87,7 @@ giftsRouter.post(
   validateBody(requestGiftSchema),
   async (req, res, next) => {
     try {
-      const { userId, suggestedGiftId } = req.body as z.infer<typeof requestGiftSchema>;
+      const { userId, suggestedGiftId, note } = req.body as z.infer<typeof requestGiftSchema>;
       const user = await getUserById(userId);
       if (!user || user.role !== "user" || user.status !== "active") {
         throw new AppError(400, "Target must be an active user");
@@ -94,7 +95,7 @@ giftsRouter.post(
 
       // This never moves money by itself — it's purely a prompt for the
       // user's client to open the gift picker (BACKEND_PLAN.md §1).
-      const payload = { hostId: req.user!.sub, suggestedGiftId: suggestedGiftId ?? null };
+      const payload = { hostId: req.user!.sub, suggestedGiftId: suggestedGiftId ?? null, note: note || null };
       emitToUser(userId, "gift:requested", payload);
 
       if (!(await isUserConnected(userId))) {

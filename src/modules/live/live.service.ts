@@ -2,8 +2,6 @@ import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../../db/client";
 import { liveBroadcasts, liveViewers, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
-import { getCurrentAdultModeEnabled } from "../admin/admin.service";
-import { getUserById } from "../users/users.service";
 
 type LiveBroadcast = typeof liveBroadcasts.$inferSelect;
 
@@ -25,25 +23,12 @@ async function getActiveBroadcastForHost(hostId: string): Promise<LiveBroadcast 
   return broadcast;
 }
 
-// isAdultContent (BR-MOD-01/02) requires both the platform-wide toggle to
-// currently be on and the host themselves to be age-verified — a broadcast
-// can't be marked adult by a host whose own age isn't on record.
-export async function startBroadcast(hostId: string, isAdultContent = false): Promise<LiveBroadcast> {
+export async function startBroadcast(hostId: string): Promise<LiveBroadcast> {
   if (await getActiveBroadcastForHost(hostId)) {
     throw new AppError(409, "You already have a live broadcast running");
   }
 
-  if (isAdultContent) {
-    if (!(await getCurrentAdultModeEnabled())) {
-      throw new AppError(403, "Adult content mode is currently disabled platform-wide");
-    }
-    const host = await getUserById(hostId);
-    if (!host?.ageVerified) {
-      throw new AppError(403, "Age verification required to broadcast adult content");
-    }
-  }
-
-  const [broadcast] = await db.insert(liveBroadcasts).values({ hostId, isAdultContent }).returning();
+  const [broadcast] = await db.insert(liveBroadcasts).values({ hostId }).returning();
   return broadcast;
 }
 
@@ -117,19 +102,11 @@ export async function listLiveBroadcastsForAdmin() {
   return result;
 }
 
-// viewerAgeVerified filters out isAdultContent broadcasts for a viewer
-// who isn't age-verified (BR-MOD-02) — this is the discovery list, not the
-// actual media access; joinBroadcast below applies the same gate again at
-// the point that actually matters (minting the Agora subscriber token),
-// so this isn't the only enforcement point, just the one that keeps
-// unverified viewers from seeing adult broadcasts exist in the first place.
-export async function listLiveBroadcasts(viewerAgeVerified: boolean) {
+export async function listLiveBroadcasts() {
   const rows = await db.select().from(liveBroadcasts).where(eq(liveBroadcasts.status, "live"));
 
   const result = [];
   for (const broadcast of rows) {
-    if (broadcast.isAdultContent && !viewerAgeVerified) continue;
-
     const [host] = await db
       .select({ id: users.id, name: users.name })
       .from(users)
@@ -168,11 +145,6 @@ export async function isActiveViewer(broadcastId: string, userId: string): Promi
 export async function joinBroadcast(broadcastId: string, userId: string): Promise<LiveBroadcast> {
   const broadcast = await getBroadcastById(broadcastId);
   if (!broadcast || broadcast.status !== "live") throw new AppError(404, "Broadcast not found or has ended");
-
-  if (broadcast.isAdultContent) {
-    const viewer = await getUserById(userId);
-    if (!viewer?.ageVerified) throw new AppError(403, "Age verification required to view this content");
-  }
 
   const existing = await getActiveViewerRow(broadcastId, userId);
   if (!existing) {

@@ -48,8 +48,9 @@ server gives no signal that a refresh is due.
 |---|---|---|---|
 | `presence:update` | host toggles `PATCH /me/presence`, or their last socket disconnects (auto-offline) | everyone (`io.emit`) | `{ hostId, isOnline }` |
 | `host:busy` | a call is accepted (`isBusy: true`); an ongoing call ends — hang-up by either side, insufficient balance, or the stale-call reaper (`isBusy: false`). Ringing calls don't count | everyone (`io.emit`) | `{ hostId, isBusy }` — the initial value is `isBusy` on `GET /hosts` and `GET /hosts/:hostId`; show "Busy" over "Online" while true |
-| `call:incoming` | `POST /calls` | the called host | `{ callId, userId, callerName, ratePerMinutePaise }` |
+| `call:incoming` | `POST /calls` | the called host | `{ callId, userId, callerName, ratePerMinutePaise, type, mediaProvider }` — `type` is `"video"` or `"voice"` (the Host app opens the camera only for video); `mediaProvider` is `"agora"` or `"p2p"`, fixed for this call |
 | `call:accepted` | `POST /calls/:id/accept` | the calling user | `{ callId, channelName }` |
+| `call:signal` | `POST /calls/:id/signal` (p2p calls only) | the *other* participant of that call | `{ callId, fromUserId, data }` — `data` is WebRTC setup, relayed unchanged: `{ type: "hello" }`, `{ type: "offer" \| "answer", sdp }`, or `{ type: "candidate", candidate: RTCIceCandidateInit }`. Handshake: both sides send `hello` when their media is ready; the caller sends the offer only after receiving the host's `hello`; the host replies to the first `hello` it receives with one of its own. See `lib/p2p.js` in either app |
 | `call:ended` | reject / end / ringing-timeout / insufficient-balance / stale-call reaper sweep | both parties (or the caller alone for a miss/reject) | `{ callId, status, totalAmountPaise, totalBeans, endReason? }` — there is no separate `call:missed`/`call:declined` event; those cases are `call:ended` with `status: "missed"` / `"rejected"` and an `endReason` |
 | `call:low-balance-warning` | mid-call billing tick leaves the user under one tick's cost | the calling user | `{ callId, remainingPaise }` |
 | `chat:message` | `POST /chat/messages` | the other participant | `{ conversationId, messageId, senderId, content, createdAt }` |
@@ -57,7 +58,7 @@ server gives no signal that a refresh is due.
 | `live:chat` | `POST /live/broadcasts/:id/chat` | the broadcast room (host + viewers) | `{ broadcastId, senderId, senderName, content, createdAt }` — not persisted; BR-LIVE-02 only requires live visibility, not chat history |
 | `live:ended` | `POST /live/broadcasts/:id/end`, or admin force-end | the broadcast room | `{ broadcastId }` |
 | `gift:received` | `POST /gifts/send` | the recipient host, plus the broadcast room too when `context: "live"` | `{ giftTransactionId, senderId, gift: { id, name, iconUrl }, beansCredited }` |
-| `gift:requested` | `POST /gifts/request` | the requested host | `{ hostId, suggestedGiftId }` |
+| `gift:requested` | `POST /gifts/request` | the requested user | `{ hostId, suggestedGiftId, note }` — `note` is the host's optional message (max 140 chars) or `null` |
 | `gift:requestDeclined` | `POST /gifts/request/decline` | the declined host | `{ userId, giftId }` (`giftId` is `null` unless the client passed one) |
 | `kyc:decision` | `POST /admin/kyc/:userId/decision` | the user whose KYC was decided | `{ status, reason }` (`status` is `"approved"` or `"rejected"`; `reason` is `null` for approvals) |
 | `notification:new` | a gift received / withdrawal status change / missed call inserts a row into `notifications` | the notified user | the full inserted notification row: `{ id, userId, type, title, body, read, createdAt }` |

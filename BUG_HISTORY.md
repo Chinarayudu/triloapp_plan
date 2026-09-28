@@ -20,6 +20,22 @@ Copy this for each new entry, filled in, added to the top of the log below.
 
 ## Log
 
+### [2026-09-28] Host "today" earnings wrong before 05:30 IST; same-day earnings breakdown unusable
+
+**Symptom**: The Host app's "Today" earnings (`GET /me/dashboard` `todayEarningsPaise`) showed the previous day's numbers until 05:30 IST. `GET /me/earnings/breakdown?from=2026-09-27&to=2026-09-27`, which the Host app planned to use for a single day, is rejected with 400 (plain dates weren't accepted). With datetimes, `to` was exclusive, so from = to always covered zero time.
+**Root cause**: `earnings.service.ts` computed "today", "this month" and the last-7-days series from UTC midnight (`startOfUtcDay`/`startOfUtcMonth`), and UTC midnight is 05:30 IST. The breakdown and statement routes only accepted ISO datetimes, and treated `to` as an exclusive instant.
+**Affected files**: `src/lib/dayBounds.ts` (new, IST/tz day maths using `Intl`), `src/modules/wallet/earnings.service.ts` (`hostToday`/`startOfHostMonth` replace the UTC helpers; last-7-days labels are IST dates), `src/modules/wallet/earnings.routes.ts` (`resolveRange`: `from`/`to` accept `YYYY-MM-DD` as IST days with `to` inclusive; datetimes behave as before; `from >= to` → 400; the statement filename uses the IST dates), `src/modules/wallet/dailyStats.test.ts` (regression tests).
+**Fix**: Use IST day boundaries (`DEFAULT_TIME_ZONE`) everywhere a host sees "today" or "per day". Datetime inputs keep their old exclusive meaning, so existing callers are unchanged.
+**Call sites checked**: `getHostDashboard` (today earnings and `todayCallsCount`), `getHostEarningsSummary` (month subtotals and last-7-days), the breakdown and statement routes (the only callers of `getHostEarningsBreakdown`/`getHostEarningsStatementCsv`), and `getHostHistory` (unchanged; it takes explicit bounds). The Host app calls breakdown with no dates (it gets the default month, now the IST month) and the statement with optional dates. `tsc` is clean, the new tests pass, and the Host newman collection passes (62/62).
+
+### [2026-09-28] A rejected or failed withdrawal showed up as "today's earnings"
+
+**Symptom**: Found while building the daily report, not reported by a user. When a host's withdrawal is rejected, or its payout fails, the beans returned to them were counted in `todayEarningsPaise` and in the earnings summary's last-7-days series as if they had just been earned.
+**Root cause**: `sumHostLedgerCredits` (`earnings.service.ts`) summed every host-wallet credit. Withdrawal reversals are also host credits (`creditHostBeans`, `referenceType: "withdrawal"`).
+**Affected files**: `src/modules/wallet/earnings.service.ts` (`HOST_EARNING_REFERENCE_TYPES` = `call_billing`, `gift`, `chat_message`, `adjustment`; `sumHostLedgerCredits` filters on it), `src/modules/wallet/dailyStats.test.ts` (regression test).
+**Fix**: Count only credits that are earnings. Balance and withdrawal logic are untouched; this only changes what's reported as earned.
+**Call sites checked**: `sumHostLedgerCredits` is used only by `getHostDashboard` and `getHostEarningsSummary`'s last-7-days. `sumHostLedgerCreditsByReference` already filtered by type. Host levels already exclude reversals (`lifetime_earned_beans` is only incremented in `transferUserToHost`). No money-moving code changed.
+
 ### [2026-09-27] Host in a call still shows "Online" to other users
 
 **Symptom**: While a host is in an accepted call, every other user's User app still shows them as "Online" — tapping call then fails with `409 "Host is busy"`.

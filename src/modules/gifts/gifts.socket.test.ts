@@ -48,6 +48,43 @@ describe("Gifts: live notifications", () => {
     expect((await received).gift.name).toBe("Rose");
   });
 
+  it("delivers the host's optional note with gift:requested, and rejects a note over 140 characters", async () => {
+    const app = createApp();
+    httpServer = createServer(app);
+    createSocketServer(httpServer);
+    await new Promise<void>((resolve) => httpServer!.listen(0, resolve));
+    const port = (httpServer.address() as AddressInfo).port;
+
+    const user = await registerAndLogin(app, "user");
+    const host = await registerAndLogin(app, "host");
+
+    clientSocket = ioClient(`http://localhost:${port}`, { auth: { token: user.accessToken } });
+    await new Promise<void>((resolve, reject) => {
+      clientSocket!.on("connect", resolve);
+      clientSocket!.on("connect_error", reject);
+    });
+
+    const requested = new Promise<{ hostId: string; note: string | null }>((resolve) =>
+      clientSocket!.on("gift:requested", resolve),
+    );
+
+    const ok = await request(app)
+      .post("/host/gifts/request")
+      .set("Authorization", `Bearer ${host.accessToken}`)
+      .send({ userId: user.user.id, note: "Thanks for the chat 😊🌹" });
+    expect(ok.status).toBe(200);
+
+    const payload = await requested;
+    expect(payload.hostId).toBe(host.user.id);
+    expect(payload.note).toBe("Thanks for the chat 😊🌹");
+
+    const tooLong = await request(app)
+      .post("/host/gifts/request")
+      .set("Authorization", `Bearer ${host.accessToken}`)
+      .send({ userId: user.user.id, note: "x".repeat(141) });
+    expect(tooLong.status).toBe(400);
+  });
+
   it("delivers gift:requestDeclined to a connected host when a user declines", async () => {
     const app = createApp();
     httpServer = createServer(app);

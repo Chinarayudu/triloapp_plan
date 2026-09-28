@@ -164,6 +164,22 @@ export const hostGalleryItems = pgTable("host_gallery_items", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Every period a host was marked online (Host app daily report). Opened by
+// PATCH /me/presence {isOnline:true}; closed by the offline toggle, the
+// host's last socket disconnecting, or onlineSessionSweep.ts when the host
+// stops being reachable. lastSeenAt is bumped by that sweep while the host
+// is still connected, so a session left open by a crash/restart is closed
+// at the last moment the host was actually seen, not at restart time.
+export const hostOnlineSessions = pgTable("host_online_sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  hostId: uuid("host_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // A host's payout destinations (Host app design follow-up) — replaces the
 // old single hostProfiles.payoutDetails JSON blob. A host can hold several
 // (e.g. a primary bank account + a backup UPI id); exactly one is primary
@@ -524,18 +540,6 @@ export const beansEarnConfigs = pgTable("beans_earn_configs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// The global 18+ toggle (BACKEND_PLAN.md §5, BR-MOD-01) — same versioned
-// "latest effectiveFrom wins" pattern as the two configs above. Gates
-// whether a HOST is allowed to mark a broadcast `isAdultContent` (see
-// liveBroadcasts below) at all; it does not retroactively degrade a
-// broadcast already marked adult if later flipped off (Phase 10, admin.service.ts).
-export const adultModeConfigs = pgTable("adult_mode_configs", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  enabled: boolean("enabled").notNull(),
-  effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
 // ---------------------------------------------------------------------------
 // Calls (BACKEND_PLAN.md §4). State machine simplified from the original
 // design doc: REQUESTED/ACCEPTED aren't persisted as distinct states since
@@ -556,6 +560,25 @@ export const callStatusEnum = pgEnum("call_status", [
 // added — Host app design follow-up), so existing rows backfill as video.
 export const callTypeEnum = pgEnum("call_type", ["video", "voice"]);
 
+// Who carries a 1:1 call's audio/video. "agora" = Agora's network, billed per
+// participant-minute. "p2p" = plain browser WebRTC between the two devices,
+// signaled through our own socket (POST /calls/:id/signal) with a TURN relay
+// only for the minority of networks that block a direct connection — near-zero
+// media cost. Billing, ringing and the call state machine are identical for
+// both; only how the two apps exchange media differs.
+export const callMediaProviderEnum = pgEnum("call_media_provider", ["agora", "p2p"]);
+
+// Admin-switchable (POST /admin/config/call-media), versioned the same way as
+// commissionConfigs — latest row whose effectiveFrom isn't in the future wins.
+// Each call snapshots the active provider onto itself at creation, so a switch
+// never changes the provider of a call that's already ringing or ongoing.
+export const callMediaConfigs = pgTable("call_media_configs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  provider: callMediaProviderEnum("provider").notNull(),
+  effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const calls = pgTable("calls", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id")
@@ -566,6 +589,7 @@ export const calls = pgTable("calls", {
     .references(() => users.id),
   status: callStatusEnum("status").notNull().default("ringing"),
   type: callTypeEnum("type").notNull().default("video"),
+  mediaProvider: callMediaProviderEnum("media_provider").notNull().default("agora"),
   // Snapshotted at call creation so later admin config changes can't alter
   // an in-flight or already-settled call (BR-COM-02).
   ratePerMinutePaiseSnapshot: integer("rate_per_minute_paise_snapshot").notNull(),
@@ -723,13 +747,6 @@ export const liveBroadcasts = pgTable("live_broadcasts", {
     .references(() => users.id),
   status: liveBroadcastStatusEnum("status").notNull().default("live"),
   peakViewerCount: integer("peak_viewer_count").notNull().default(0),
-  // BR-MOD-01/02 (Phase 10) — set at start time only, requires
-  // adultModeConfigs' global toggle to currently be on and the host to be
-  // age-verified (live.service.ts's startBroadcast). Once set, stays true
-  // for the life of the broadcast even if the global toggle is later
-  // flipped off — a later admin change never retroactively re-opens
-  // already-gated content to unverified viewers.
-  isAdultContent: boolean("is_adult_content").notNull().default(false),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   endedAt: timestamp("ended_at", { withTimezone: true }),
 });

@@ -1347,7 +1347,7 @@
                 "calls"
               ]
             },
-            "description": "type is \"video\" or \"voice\" — the host needs the matching per-type rate set (Setup folder only sets the video rate). If VIP Subscription → Subscribe ran above and wasn't cancelled, the snapshotted rate reflects the VIP discount."
+            "description": "type is \"video\" or \"voice\" — the host needs the matching per-type rate set (Setup folder only sets the video rate). If VIP Subscription → Subscribe ran above and wasn't cancelled, the snapshotted rate reflects the VIP discount. mediaProvider (\"agora\" | \"p2p\") says which network carries this call's media — admin-switchable (Admin → Pricing & Economics Config → Call Media Provider), fixed per call once created. \"agora\": join with agoraToken (iceServers is null). \"p2p\": connect directly with browser WebRTC using iceServers (agoraToken is null), exchanging setup messages via POST .../calls/:id/signal — see REALTIME_EVENTS.md call:signal."
           },
           "event": [
             {
@@ -1386,6 +1386,52 @@
               ]
             }
           }
+        },
+        {
+          "name": "2b. Send p2p Signal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"data\": { \"type\": \"hello\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/calls/{{callId}}/signal",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "calls",
+                "{{callId}}",
+                "signal"
+              ]
+            },
+            "description": "p2p calls only — relays WebRTC setup to the other participant as the call:signal socket event (204, no body). data is one of { \"type\": \"hello\" }, { \"type\": \"offer\" | \"answer\", \"sdp\": \"...\" }, or { \"type\": \"candidate\", \"candidate\": { candidate, sdpMid, sdpMLineIndex, usernameFragment } }. Returns 409 when this call uses Agora (the default provider) — both outcomes are expected here, depending on the current Call Media Provider setting. The apps send these automatically (lib/p2p.js); this request is for inspecting the endpoint."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"204 for a p2p call, 409 for an Agora call\", function () { pm.expect([204, 409]).to.include(pm.response.code); });"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "3. End Call",

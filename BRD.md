@@ -26,7 +26,7 @@ The core business mechanic: a user recharges real money into a wallet, spends it
 - **BO-2**: Enable hosts to earn from their time (calls), attention (live broadcasts), and audience goodwill (gifts), and withdraw those earnings reliably.
 - **BO-3**: Guarantee the platform's commission is captured on every monetized interaction, with no path for money to move between a user and a host without commission being applied.
 - **BO-4**: Give the admin/business team full operational control over pricing, commission, payout economics, and content policy — without needing a code deployment to change a number.
-- **BO-5**: Operate within the legal/compliance envelope required for a platform that includes an admin-togglable 18+ content mode and real-money withdrawal.
+- **BO-5**: Operate within the legal/compliance envelope required for a real-money video-chat platform with host withdrawals. 18+ / adult content is strictly prohibited.
 
 ---
 
@@ -41,7 +41,6 @@ The core business mechanic: a user recharges real money into a wallet, spends it
 - Live broadcasting (one host, many viewers) with in-broadcast chat and gifting.
 - 1:1 text chat between user and host.
 - Gifting, including host-initiated "gift request" prompts.
-- Admin-configurable 18+ content mode and age-gating.
 - Screenshot/recording policy enforcement hooks (frontend-enforced, backend-configured/logged — see §7).
 - Admin moderation queue, KYC approval, pricing/commission/payout configuration, analytics dashboards, RBAC for sub-admins.
 - Push notifications for calls, gifts, low balance, withdrawal status, host going live.
@@ -77,7 +76,7 @@ Each requirement is labeled `BR-<module>-<num>` for traceability.
 - **BR-ACC-01**: The system shall support three distinct roles — User, Host, Admin (with sub-admin permission tiers) — with role-appropriate access to functionality.
 - **BR-ACC-02**: Users and Hosts shall authenticate via phone number (OTP), not username/password, to minimize account-sharing/fraud friction.
 - **BR-ACC-03**: Hosts shall complete KYC (identity document + payout account details) before being allowed to go online/available or request a withdrawal.
-- **BR-ACC-04**: The system shall capture and verify date of birth as part of KYC for both Users and Hosts, distinct from a self-declared checkbox, to support defensible age-gating (see BR-MOD-02).
+- **BR-ACC-04**: The system shall capture and verify date of birth as part of KYC for both Users and Hosts, distinct from a self-declared checkbox.
   - **Amended (User app design follow-up)**: for **Hosts**, this still means KYC-document-reviewed verification (unchanged, `admin.service.ts`'s `decideKyc`). For **Users**, the business decided to accept self-declared DOB verification instead (`POST /me/verify-age`, instant, no document review) — a deliberate deviation from this requirement as originally written, made explicitly aware of the tradeoff (self-declaration is not "defensible" the way a reviewed document is).
 - **BR-ACC-05**: Admin shall be able to suspend or ban any User or Host account, with the suspension taking effect immediately (in-progress sessions terminated, not just blocked from new logins).
 
@@ -140,8 +139,8 @@ Each requirement is labeled `BR-<module>-<num>` for traceability.
 
 ### 5.10 Content moderation & restrictions
 
-- **BR-MOD-01**: Admin shall be able to enable or disable an "18+ content mode" for the platform (globally, and/or scoped to specific broadcasts/content) without requiring a deployment.
-- **BR-MOD-02**: When 18+ mode is enabled, only age-verified accounts (per BR-ACC-04) shall be able to access the affected content.
+- **BR-MOD-01**: *Withdrawn.* 18+ / adult content is strictly prohibited on the platform; there is no 18+ content mode. Such content is handled as a moderation violation (BR-MOD-04/05).
+- **BR-MOD-02**: *Withdrawn* (depended on BR-MOD-01).
 - **BR-MOD-03**: The system shall provide a mechanism for the app to signal that screen capture/recording should be blocked for a given session, and shall log any reported capture attempt for policy action (warning, suspension). It is understood that the actual technical blocking of screenshots/recording is a frontend/OS-level capability with platform limitations (particularly on iOS) — this is a policy-and-logging requirement on the backend, not a guarantee of prevention.
 - **BR-MOD-04**: Users and Hosts shall be able to report another user/host or a piece of content; reports shall enter an Admin moderation queue.
 - **BR-MOD-05**: Admin shall be able to suspend/ban an account as a result of a moderation action, consistent with BR-ACC-05.
@@ -182,7 +181,6 @@ Each requirement is labeled `BR-<module>-<num>` for traceability.
 
 ## 8. Constraints
 
-- Adult-content-adjacent monetization significantly narrows the pool of usable payment gateways to high-risk-tier processors, which may have longer onboarding and different fee structures than mainstream gateways (see `BACKEND_PLAN.md` §3).
 - Real-money withdrawal to hosts introduces KYC/AML-adjacent obligations that constrain how quickly a host can be onboarded to full earning/withdrawal capability.
 - The backend is being built by a single developer initially (see `DEVELOPMENT_ROADMAP.md`), which bounds how many phases can run in true parallel.
 
@@ -190,10 +188,9 @@ Each requirement is labeled `BR-<module>-<num>` for traceability.
 
 | Risk | Mitigation |
 |---|---|
-| Payment gateway rejects or later freezes the merchant account over adult-content policy | Apply specifically as high-risk merchant category upfront; keep a fallback gateway integration path in the architecture rather than hard-coding one vendor |
+| Payment gateway rejects or later freezes the merchant account (e.g. paid-chat business model review) | Disclose the business model plainly at onboarding (18+ prohibited, active moderation); keep a fallback gateway integration path in the architecture rather than hard-coding one vendor |
 | Billing bug causes user overcharge or host underpayment | Server-authoritative billing, double-entry ledger, nightly reconciliation, heavy test focus on the calls/billing phase (`DEVELOPMENT_ROADMAP.md` Phase 4) |
 | Self-dealing fraud (host and user accounts colluding, or a host self-calling a second account) | Device-fingerprinting and velocity/anomaly rules, flagged as a Phase 11 hardening item |
-| Age-verification gap leads to compliance exposure on 18+ content | KYC-backed `age_verified` flag, not a self-declared checkbox; legal review before 18+ mode is enabled in production |
 | Frontend teams blocked waiting on backend delivery | Contract-first development model — mock APIs published before implementation, per `DEVELOPMENT_ROADMAP.md` §0 |
 
 ## 10. Success metrics (indicative — confirm targets with business)
@@ -208,7 +205,6 @@ Each requirement is labeled `BR-<module>-<num>` for traceability.
 
 - Payment gateway account approval (external, business-side).
 - Video/live-streaming CPaaS vendor account and pricing agreement (external).
-- Legal/compliance sign-off on 18+ mode and age-verification approach before production enablement.
 - Frontend teams' consumption of the shared API contract (see `DEVELOPMENT_ROADMAP.md`).
 
 ## 12. Glossary

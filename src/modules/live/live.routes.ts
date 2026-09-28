@@ -6,7 +6,6 @@ import { sendPushNotification } from "../../lib/push";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
 import { emitToRoom, emitToUser, isUserConnected, joinUserToRoom, leaveUserFromRoom } from "../../realtime/socket";
-import { getCurrentAdultModeEnabled } from "../admin/admin.service";
 import { listFollowerIds } from "../hosts/follow.service";
 import { getUserById } from "../users/users.service";
 import {
@@ -51,21 +50,13 @@ async function notifyFollowersHostWentLive(hostId: string, broadcastId: string):
   }
 }
 
-// .default({}) on the outer schema, not just the inner field — starting a
-// broadcast with no body at all is the common case (isAdultContent is
-// opt-in), and with no Content-Type header, Express leaves req.body as
-// `undefined` rather than `{}`, which z.object() alone would reject.
-const startBroadcastSchema = z.object({ isAdultContent: z.boolean().default(false) }).default(() => ({ isAdultContent: false }));
-
 liveRouter.post(
   "/live/broadcasts",
   requireAuth,
   requireRole("host"),
-  validateBody(startBroadcastSchema),
   async (req, res, next) => {
     try {
-      const { isAdultContent } = req.body as z.infer<typeof startBroadcastSchema>;
-      const broadcast = await startBroadcast(req.user!.sub, isAdultContent);
+      const broadcast = await startBroadcast(req.user!.sub);
       await notifyFollowersHostWentLive(req.user!.sub, broadcast.id);
       const channelName = liveRoomName(broadcast.id);
       // Viewers join this room via POST /join below; without also joining
@@ -76,8 +67,9 @@ liveRouter.post(
         broadcastId: broadcast.id,
         status: broadcast.status,
         channelName,
-        isAdultContent: broadcast.isAdultContent,
-        secureMode: broadcast.isAdultContent,
+        // Always on, same as 1:1 calls (calls.routes.ts) — 18+ content is
+        // prohibited outright, but hosts' faces/voices are still sensitive.
+        secureMode: true,
         agoraToken: generateAgoraToken(channelName, req.user!.sub, RtcRole.PUBLISHER),
       });
     } catch (err) {
@@ -85,16 +77,6 @@ liveRouter.post(
     }
   },
 );
-
-// BR-MOD-01 — lets a host's app decide whether to even offer the "mark as
-// 18+" toggle before they try to go live with it.
-liveRouter.get("/live/adult-mode", requireAuth, async (_req, res, next) => {
-  try {
-    res.json({ enabled: await getCurrentAdultModeEnabled() });
-  } catch (err) {
-    next(err);
-  }
-});
 
 liveRouter.post("/live/broadcasts/:id/end", requireAuth, requireRole("host"), async (req, res, next) => {
   try {
@@ -109,8 +91,7 @@ liveRouter.post("/live/broadcasts/:id/end", requireAuth, requireRole("host"), as
 
 liveRouter.get("/live/broadcasts", requireAuth, async (req, res, next) => {
   try {
-    const viewer = await getUserById(req.user!.sub);
-    const broadcasts = await listLiveBroadcasts(Boolean(viewer?.ageVerified));
+    const broadcasts = await listLiveBroadcasts();
     res.json({ broadcasts });
   } catch (err) {
     next(err);
@@ -126,7 +107,7 @@ liveRouter.post("/live/broadcasts/:id/join", requireAuth, requireRole("user"), a
     res.json({
       broadcastId,
       channelName,
-      secureMode: broadcast.isAdultContent,
+      secureMode: true,
       agoraToken: generateAgoraToken(channelName, req.user!.sub, RtcRole.SUBSCRIBER),
     });
   } catch (err) {

@@ -18,7 +18,6 @@ import { listBroadcastMessages, sendBroadcastMessage } from "./broadcastMessage.
 import { adminDeleteGalleryItem, listGalleryItems } from "../hosts/gallery.service";
 import { endBroadcastAsAdmin, listLiveBroadcastsForAdmin, liveRoomName } from "../live/live.service";
 import {
-  createAdultModeConfig,
   createBeansEarnConfig,
   createCommissionConfig,
   createGift,
@@ -28,7 +27,6 @@ import {
   decideKyc,
   getDashboardStats,
   getKycSubmissionForReview,
-  listAdultModeConfigs,
   listAllGifts,
   listAuditLog,
   listBeansEarnConfigs,
@@ -43,6 +41,7 @@ import {
   updateSubAdminPermissions,
 } from "./admin.service";
 import { requireAdminPermission } from "./permissions";
+import { getCurrentCallMediaProvider, listCallMediaConfigs, setCallMediaProvider } from "../calls/callMedia.service";
 
 export const adminRouter = Router();
 
@@ -220,6 +219,33 @@ adminRouter.post(
   },
 );
 
+// Which network carries 1:1 call audio/video — "agora" (per-minute billed) or
+// "p2p" (direct WebRTC + TURN relay, near-zero media cost). A cost lever, so
+// finance permission. The first entry is the current one.
+adminRouter.get("/admin/config/call-media", requireAdminPermission("finance"), async (_req, res, next) => {
+  try {
+    res.json({ current: await getCurrentCallMediaProvider(), configs: await listCallMediaConfigs() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const callMediaConfigSchema = z.object({ provider: z.enum(["agora", "p2p"]) });
+
+adminRouter.post(
+  "/admin/config/call-media",
+  requireAdminPermission("finance"),
+  validateBody(callMediaConfigSchema),
+  async (req, res, next) => {
+    try {
+      const { provider } = req.body as z.infer<typeof callMediaConfigSchema>;
+      res.status(201).json(await setCallMediaProvider(req.user!.sub, provider));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 adminRouter.get("/admin/config/withdrawal-policy", requireAdminPermission("finance"), async (_req, res, next) => {
   try {
     res.json({ configs: await listWithdrawalPolicyConfigs() });
@@ -279,38 +305,6 @@ adminRouter.post(
     try {
       const { slabs } = req.body as z.infer<typeof withdrawalSlabsSchema>;
       res.status(201).json({ configs: await createWithdrawalSlabSet(req.user!.sub, slabs) });
-    } catch (err) {
-      next(err);
-    }
-  },
-);
-
-// ---------------------------------------------------------------------------
-// 18+ toggle (BR-MOD-01) — full ADMIN only, not gated by "moderation"
-// permission like the rest of this section (admin design: "Accessible to
-// Super Admin Only"). Flipping platform-wide adult-content policy is a
-// bigger call than the day-to-day content moderation a moderation-scoped
-// sub-admin otherwise handles.
-// ---------------------------------------------------------------------------
-
-adminRouter.get("/admin/config/adult-mode", requireRole("admin"), async (_req, res, next) => {
-  try {
-    res.json({ configs: await listAdultModeConfigs() });
-  } catch (err) {
-    next(err);
-  }
-});
-
-const adultModeConfigSchema = z.object({ enabled: z.boolean() });
-
-adminRouter.post(
-  "/admin/config/adult-mode",
-  requireRole("admin"),
-  validateBody(adultModeConfigSchema),
-  async (req, res, next) => {
-    try {
-      const { enabled } = req.body as z.infer<typeof adultModeConfigSchema>;
-      res.status(201).json(await createAdultModeConfig(req.user!.sub, enabled));
     } catch (err) {
       next(err);
     }

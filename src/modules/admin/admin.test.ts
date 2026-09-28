@@ -252,56 +252,6 @@ describe("Admin: pricing/economics config (BR-ADM-02)", () => {
   });
 });
 
-describe("Admin: 18+ toggle (BR-MOD-01)", () => {
-  it("is restricted to full admins only, not sub-admins of any permission (design: super-admin-only)", async () => {
-    const app = createApp();
-    const financeOnly = await registerAndLoginAdmin("sub_admin", ["finance"]);
-
-    const blocked = await request(app)
-      .get("/admin/config/adult-mode")
-      .set("Authorization", `Bearer ${financeOnly.accessToken}`);
-    expect(blocked.status).toBe(403);
-
-    // Even a sub-admin with the moderation permission is blocked — 18+ mode
-    // is full-admin-only, not gated by the moderation permission grant.
-    const moderationOnly = await registerAndLoginAdmin("sub_admin", ["moderation"]);
-    const stillBlocked = await request(app)
-      .get("/admin/config/adult-mode")
-      .set("Authorization", `Bearer ${moderationOnly.accessToken}`);
-    expect(stillBlocked.status).toBe(403);
-
-    const fullAdmin = await registerAndLoginAdmin();
-    const allowed = await request(app)
-      .get("/admin/config/adult-mode")
-      .set("Authorization", `Bearer ${fullAdmin.accessToken}`);
-    expect(allowed.status).toBe(200);
-  });
-
-  it("toggles the global flag, visible via the public read endpoint, then restores the seeded default", async () => {
-    const app = createApp();
-    const admin = await registerAndLoginAdmin();
-
-    // Doesn't assert the "before" value against the seeded default — this
-    // is real shared global state (like commission/slab config above), and
-    // another test file's concurrently-running adult-mode test could
-    // legitimately have it flipped on at this exact instant. Only the
-    // causal effect of this test's own writes is asserted.
-    const created = await request(app)
-      .post("/admin/config/adult-mode")
-      .set("Authorization", `Bearer ${admin.accessToken}`)
-      .send({ enabled: true });
-    expect(created.status).toBe(201);
-
-    const after = await request(app).get("/user/live/adult-mode").set("Authorization", `Bearer ${admin.accessToken}`);
-    expect(after.body.enabled).toBe(true);
-
-    await request(app)
-      .post("/admin/config/adult-mode")
-      .set("Authorization", `Bearer ${admin.accessToken}`)
-      .send({ enabled: false }); // restore the seeded default
-  });
-});
-
 describe("Admin: gift catalog CRUD (BR-ADM-02)", () => {
   it("creates a gift, deactivates it, and it disappears from the public catalog", async () => {
     const app = createApp();

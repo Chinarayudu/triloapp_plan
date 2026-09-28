@@ -1,7 +1,6 @@
 import { and, desc, eq, gt, gte, inArray, isNull, lte, SQL, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import {
-  adultModeConfigs,
   auditLogs,
   beansEarnConfigs,
   calls,
@@ -235,40 +234,6 @@ export async function createWithdrawalSlabSet(
     .returning();
   await writeAuditLog(adminId, "config.withdrawal_slabs.create", "withdrawal_slab", null, { slabs });
   return rows;
-}
-
-// ---------------------------------------------------------------------------
-// 18+ toggle (BACKEND_PLAN.md §5, BR-MOD-01) — Phase 10. Same versioned
-// "insert a new row" pattern as the pricing config above.
-// ---------------------------------------------------------------------------
-
-export async function listAdultModeConfigs() {
-  return db.select().from(adultModeConfigs).orderBy(desc(adultModeConfigs.effectiveFrom));
-}
-
-// Read by live.service.ts (startBroadcast) to gate whether a host can mark
-// a broadcast adult content — an unseeded platform defaults to "off" rather
-// than throwing, since (unlike commission) nothing downstream requires this
-// to exist for the platform to otherwise function.
-export async function getCurrentAdultModeEnabled(): Promise<boolean> {
-  const [row] = await db
-    .select()
-    .from(adultModeConfigs)
-    .where(lte(adultModeConfigs.effectiveFrom, new Date()))
-    .orderBy(desc(adultModeConfigs.effectiveFrom))
-    .limit(1);
-  return row?.enabled ?? false;
-}
-
-export async function createAdultModeConfig(adminId: string, enabled: boolean) {
-  const previousEnabled = await getCurrentAdultModeEnabled();
-
-  const [row] = await db.insert(adultModeConfigs).values({ enabled }).returning();
-  await writeAuditLog(adminId, "config.adult_mode.create", "adult_mode_config", row.id, {
-    previous: previousEnabled,
-    new: enabled,
-  });
-  return row;
 }
 
 // ---------------------------------------------------------------------------

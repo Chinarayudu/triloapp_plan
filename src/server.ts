@@ -4,6 +4,7 @@ import { env } from "./config/env";
 import { pool } from "./db/client";
 import { logger } from "./lib/logger";
 import { reapStaleCalls, startCallReaper } from "./modules/calls/callReaper";
+import { startOnlineSessionSweep, sweepOnlineSessions } from "./modules/hosts/onlineSessionSweep";
 import { startReconciliationSweep } from "./modules/wallet/reconciliation.service";
 import { createSocketServer } from "./realtime/socket";
 
@@ -23,6 +24,11 @@ httpServer.listen(env.PORT, () => {
 void reapStaleCalls().catch((err) => logger.error({ err }, "Startup call reaper sweep failed"));
 startCallReaper(env.CALL_REAPER_INTERVAL_MS);
 startReconciliationSweep(env.WALLET_RECONCILIATION_INTERVAL_MS);
+
+// Same boot-then-interval shape as the call reaper: presence is in-memory,
+// so online sessions left open by the previous process are closed at boot.
+void sweepOnlineSessions().catch((err) => logger.error({ err }, "Startup online session sweep failed"));
+startOnlineSessionSweep(30_000);
 
 async function shutdown(signal: string): Promise<void> {
   logger.info(`${signal} received, shutting down`);

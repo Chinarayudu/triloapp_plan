@@ -77,6 +77,12 @@ const envSchema = z.object({
   // Agora project configured.
   AGORA_APP_ID: z.string().optional(),
   AGORA_APP_CERTIFICATE: z.string().optional(),
+  // Optional as a pair — TURN relay for "p2p" calls (lib/iceServers.ts),
+  // from a Cloudflare Realtime TURN key. Missing means STUN only: calls
+  // still connect directly for most networks, but the ~15-20% behind strict
+  // NAT/carrier firewalls that need a relay will fail to connect media.
+  CLOUDFLARE_TURN_KEY_ID: z.string().optional(),
+  CLOUDFLARE_TURN_API_TOKEN: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

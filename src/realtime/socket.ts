@@ -3,7 +3,8 @@ import { Server as SocketIOServer } from "socket.io";
 import { env } from "../config/env";
 import { verifyAccessToken } from "../lib/jwt";
 import { logger } from "../lib/logger";
-import { isOnline as isHostMarkedOnline, setOffline as setHostOffline } from "../modules/hosts/presence.store";
+import { markHostOffline } from "../modules/hosts/onlineSessions.service";
+import { isOnline as isHostMarkedOnline } from "../modules/hosts/presence.store";
 import { endActiveBroadcastForHostIfAny, liveRoomName } from "../modules/live/live.service";
 
 // Module-level singleton, same shape as db/client.ts's `pool`/`db` exports —
@@ -52,7 +53,7 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
     socket.on("disconnect", async () => {
       logger.debug({ userId }, "socket disconnected");
       if (isHostMarkedOnline(userId) && !(await isUserConnected(userId))) {
-        setHostOffline(userId);
+        await markHostOffline(userId).catch((err) => logger.error({ err, userId }, "Closing online session on disconnect failed"));
         broadcastPresence(userId, false);
       }
 

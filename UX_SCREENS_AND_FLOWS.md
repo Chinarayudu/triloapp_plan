@@ -12,7 +12,6 @@ Three apps, three sections below, plus shared elements every app needs.
 - **Profile setup** (first login only) — name, photo, DOB (feeds age verification), for Users and Hosts.
 - **Notifications center** — list of past notifications (call, gift, low balance, withdrawal status, etc.), tap-through to the relevant screen.
 - **Standard states every screen needs a design for**: loading, empty ("no hosts online right now", "no messages yet"), error/retry, offline/no-connectivity, session-expired → re-login.
-- **18+ interstitial** — a one-time (or per-session) consent/age-confirmation screen shown when 18+ mode is active and the account is entering age-gated content, distinct from the KYC-based verification itself.
 - **Screenshot/recording-blocked notice** — a screen/toast shown when the app detects (or preemptively blocks) a capture attempt on a secure screen (e.g., during a call). This is enforced by the frontend, but still needs a designed state.
 
 ---
@@ -91,11 +90,10 @@ Three apps, three sections below, plus shared elements every app needs.
 6. **Withdrawal approval queue** — list of pending requests above auto-approval threshold, detail view, Approve / Reject.
 7. **Pricing & economics config** — commission % (global and per-host override), beans earn-rate, withdrawal slabs table, gift catalog CRUD (name/icon/price/active toggle), minimum withdrawal amount, auto-approval threshold.
 8. **Moderation queue** — reported users/content, detail view, action buttons (dismiss / warn / suspend / ban).
-9. **18+ mode control** — a simple on/off toggle screen (plus scheduling controls, if the business wants time-boxed enablement).
-10. **Sub-admin & roles management** — create a sub-admin account, assign a permission set (e.g., finance-only, moderation-only, read-only analytics).
-11. **Audit log viewer** — searchable/filterable log of every privileged admin action (who, what, when).
-12. **Live broadcasts monitor** — list of currently active broadcasts with viewer counts, ability to force-end one.
-13. **Broadcast messaging tool** — compose and send a push notification/announcement to all users or a segment.
+9. **Sub-admin & roles management** — create a sub-admin account, assign a permission set (e.g., finance-only, moderation-only, read-only analytics).
+10. **Audit log viewer** — searchable/filterable log of every privileged admin action (who, what, when).
+11. **Live broadcasts monitor** — list of currently active broadcasts with viewer counts, ability to force-end one.
+12. **Broadcast messaging tool** — compose and send a push notification/announcement to all users or a segment.
 
 ### Key flows to storyboard
 
@@ -125,7 +123,6 @@ Use this to decide which admin screens need a permission-gated empty/locked stat
 
 - **Money display convention**: User-facing balances/prices are always real currency (₹X) — never show "coins" anywhere in the User app. Host-facing earnings are in beans, with the real-currency equivalent shown as a secondary/converted figure where helpful (e.g., on the withdrawal screen).
 - **Live/real-time indicators need a consistent visual language**: presence dot (online/busy/offline), live call cost ticking upward, live viewer count, live earnings ticking upward — these should look and feel like one family of "live number" components, not four different treatments.
-- **18+ visual treatment**: decide once (blur/age-gate overlay, badge, or separate section) and apply consistently everywhere age-gated content can appear (host list, host profile, live discovery).
 - **Empty/error/offline states** should be designed once per pattern and reused, not bespoke per screen — there are a lot of lists in this product (hosts, chats, transactions, withdrawals, moderation queue) and they should feel like one system.
 
 ---

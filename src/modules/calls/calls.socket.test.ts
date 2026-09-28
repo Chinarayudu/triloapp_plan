@@ -48,7 +48,7 @@ describe("Calls: live notifications over socket", () => {
     userSocket = await connect(user.accessToken);
     hostSocket = await connect(host.accessToken);
 
-    const incoming = new Promise<{ callId: string }>((resolve) => hostSocket!.on("call:incoming", resolve));
+    const incoming = new Promise<{ callId: string; userId: string; type: string }>((resolve) => hostSocket!.on("call:incoming", resolve));
 
     const initiate = await request(app)
       .post("/user/calls")
@@ -58,9 +58,14 @@ describe("Calls: live notifications over socket", () => {
 
     const incomingEvent = await incoming;
     expect(incomingEvent.callId).toBe(callId);
+    // The Host app picks camera vs mic-only from this — voice calls were opening the camera without it.
+    expect(incomingEvent.type).toBe("video");
+    expect(incomingEvent.userId).toBe(user.user.id);
 
     const accepted = new Promise<{ callId: string }>((resolve) => userSocket!.on("call:accepted", resolve));
-    await request(app).post(`/host/calls/${callId}/accept`).set("Authorization", `Bearer ${host.accessToken}`);
+    const acceptRes = await request(app).post(`/host/calls/${callId}/accept`).set("Authorization", `Bearer ${host.accessToken}`);
+    expect(acceptRes.body.userId).toBe(user.user.id);
+    expect(acceptRes.body.type).toBe("video");
     const acceptedEvent = await accepted;
     expect(acceptedEvent.callId).toBe(callId);
 

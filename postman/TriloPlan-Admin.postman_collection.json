@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "d3b4c5e6-3456-4c7d-8e9f-admin00000003",
     "name": "TriloPlan Admin API",
-    "description": "Backend API surface for the Admin app — everything under `/admin/*` plus admin login. See CLAUDE.md, BACKEND_PLAN.md and BRD.md in the repo for full backend context.\n\nCompanion collections: `TriloPlan-Host.postman_collection.json` and `TriloPlan-User.postman_collection.json`.\n\n## Prerequisite\nAn ADMIN account must already exist — `npm run db:seed-admin -- <phone> <email> <password>` (out-of-band provisioning; there is no admin signup flow by design). Set `adminEmail`/`adminPassword` below to match.\n\n## OTP login while there's no real SMS yet\nThe backend has a dev-only bypass (`OTP_BYPASS_VERIFICATION=true` in the server's `.env`, off in production): `POST /auth/otp/verify` accepts ANY phone + ANY 6-digit code. Used here only for the Setup folder's throwaway host/user and the sub-admin's OTP login.\n\n## Recommended run order (Collection Runner-safe, top to bottom)\nAdmin — Login & Sub-Admins → Setup — Test Host & User → KYC → Withdrawals (Admin) → Pricing & Economics Config → Users & Hosts → Moderation → Live & Broadcast Messages → Adult Mode → Audit, Dashboard & Reconciliation.",
+    "description": "Backend API surface for the Admin app — everything under `/admin/*` plus admin login. See CLAUDE.md, BACKEND_PLAN.md and BRD.md in the repo for full backend context.\n\nCompanion collections: `TriloPlan-Host.postman_collection.json` and `TriloPlan-User.postman_collection.json`.\n\n## Prerequisite\nAn ADMIN account must already exist — `npm run db:seed-admin -- <phone> <email> <password>` (out-of-band provisioning; there is no admin signup flow by design). Set `adminEmail`/`adminPassword` below to match.\n\n## OTP login while there's no real SMS yet\nThe backend has a dev-only bypass (`OTP_BYPASS_VERIFICATION=true` in the server's `.env`, off in production): `POST /auth/otp/verify` accepts ANY phone + ANY 6-digit code. Used here only for the Setup folder's throwaway host/user and the sub-admin's OTP login.\n\n## Recommended run order (Collection Runner-safe, top to bottom)\nAdmin — Login & Sub-Admins → Setup — Test Host & User → KYC → Withdrawals (Admin) → Pricing & Economics Config → Users & Hosts → Moderation → Live & Broadcast Messages → Audit, Dashboard & Reconciliation.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -1570,6 +1570,88 @@
               ]
             }
           }
+        },
+        {
+          "name": "13. Get Call Media Provider",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/config/call-media",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "config",
+                "call-media"
+              ]
+            },
+            "description": "Which network carries 1:1 call audio/video: \"agora\" (per-minute billed) or \"p2p\" (direct WebRTC + TURN relay, near-zero media cost). current = the active provider; configs = full history, newest first. No row ever set = \"agora\"."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"current is agora or p2p\", function () { pm.expect([\"agora\", \"p2p\"]).to.include(pm.response.json().current); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "14. Set Call Media Provider",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"agora\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/config/call-media",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "config",
+                "call-media"
+              ]
+            },
+            "description": "Switch 1:1 calls between \"agora\" and \"p2p\" — takes effect for the next call placed; ringing/ongoing calls keep the provider they started with. Finance permission; audit-logged with the previous value. Body defaults to \"agora\" here so running this collection never switches an environment over to p2p by accident — change it to \"p2p\" deliberately."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -1997,69 +2079,6 @@
               }
             }
           ]
-        }
-      ]
-    },
-    {
-      "name": "Adult Mode",
-      "item": [
-        {
-          "name": "1. List Adult Mode Config",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{adminAccessToken}}",
-                "type": "text"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/admin/config/adult-mode",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "admin",
-                "config",
-                "adult-mode"
-              ]
-            },
-            "description": "Restricted to full ADMIN only, not delegable to a sub-admin — the design labels this screen \"Accessible to Super Admin Only\"."
-          }
-        },
-        {
-          "name": "2. Toggle Adult Mode Config",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{adminAccessToken}}",
-                "type": "text"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"enabled\": false\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/admin/config/adult-mode",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "admin",
-                "config",
-                "adult-mode"
-              ]
-            }
-          }
         }
       ]
     },

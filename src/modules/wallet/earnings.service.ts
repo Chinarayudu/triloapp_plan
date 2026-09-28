@@ -13,33 +13,35 @@ function giftContextFilter(contexts: readonly GiftContext[]) {
     ? or(inArray(giftTransactions.context, contexts), isNull(giftTransactions.context))
     : inArray(giftTransactions.context, contexts);
 }
+import { dateInTimeZone, dayRangeInTimeZone, addDays, DEFAULT_TIME_ZONE, startOfDayInTimeZone } from "../../lib/dayBounds";
 import { getHostRatingSummary } from "../calls/ratings.service";
 import { isOnline } from "../hosts/presence.store";
 import { getActiveWithdrawalPolicy } from "../withdrawals/withdrawal.service";
 import { getCurrentPaisePerBean } from "./wallet.service";
 
-// This system has no per-user timezone concept yet (same simplification
-// noted on notification_preferences' DND hours) — "today"/"this month"
-// boundaries below are UTC-day-aligned, not the host's local day.
-function startOfUtcDay(daysAgo = 0): Date {
-  const d = new Date();
-  d.setUTCHours(0, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() - daysAgo);
-  return d;
+// No per-host timezone is stored yet, so "today"/"this month" use IST
+// (DEFAULT_TIME_ZONE) — hosts are India-first, and UTC midnight is 05:30 IST,
+// which made "today" show yesterday's numbers for the first 5.5 hours.
+function hostToday(): string {
+  return dateInTimeZone(new Date(), DEFAULT_TIME_ZONE);
 }
 
-function startOfUtcMonth(): Date {
-  const d = new Date();
-  d.setUTCHours(0, 0, 0, 0);
-  d.setUTCDate(1);
-  return d;
+function startOfHostMonth(): Date {
+  return startOfDayInTimeZone(hostToday().slice(0, 8) + "01", DEFAULT_TIME_ZONE);
 }
+
+// Host credits that are real earnings. Excludes "withdrawal" (beans handed
+// back when a withdrawal is rejected or its payout fails) — those are the
+// host's own money returning, and counting them made a reversed withdrawal
+// show up as that day's earnings.
+export const HOST_EARNING_REFERENCE_TYPES = ["call_billing", "gift", "chat_message", "adjustment"] as const;
 
 async function sumHostLedgerCredits(hostId: string, since: Date, until?: Date): Promise<number> {
   const conditions = [
     eq(ledgerEntries.ownerId, hostId),
     eq(ledgerEntries.walletType, "host"),
     eq(ledgerEntries.direction, "credit"),
+    inArray(ledgerEntries.referenceType, [...HOST_EARNING_REFERENCE_TYPES]),
     gte(ledgerEntries.createdAt, since),
   ];
   if (until) conditions.push(lt(ledgerEntries.createdAt, until));
@@ -54,7 +56,7 @@ async function sumHostLedgerCredits(hostId: string, since: Date, until?: Date): 
 // Home screen summary (Host app design follow-up).
 export async function getHostDashboard(hostId: string) {
   const paisePerBean = await getCurrentPaisePerBean();
-  const todayStart = startOfUtcDay();
+  const todayStart = startOfDayInTimeZone(hostToday(), DEFAULT_TIME_ZONE);
 
   const todayBeans = await sumHostLedgerCredits(hostId, todayStart);
 
@@ -101,17 +103,18 @@ export async function getHostEarningsSummary(hostId: string) {
   const [wallet] = await db.select().from(hostWallets).where(eq(hostWallets.hostId, hostId)).limit(1);
   const beanBalance = wallet?.beanBalance ?? 0;
 
-  const monthStart = startOfUtcMonth();
+  const monthStart = startOfHostMonth();
   const callsBeans = await sumHostLedgerCreditsByReference(hostId, "call_billing", monthStart);
   const giftBeans = await sumGiftBeansBySource(hostId, monthStart, "gift");
   const liveBeans = await sumGiftBeansBySource(hostId, monthStart, "live");
 
   const last7Days: Array<{ date: string; beans: number; amountPaise: number }> = [];
+  const today = hostToday();
   for (let i = 6; i >= 0; i--) {
-    const dayStart = startOfUtcDay(i);
-    const dayEnd = startOfUtcDay(i - 1);
-    const beans = await sumHostLedgerCredits(hostId, dayStart, dayEnd);
-    last7Days.push({ date: dayStart.toISOString().slice(0, 10), beans, amountPaise: beans * paisePerBean });
+    const date = addDays(today, -i);
+    const { start, end } = dayRangeInTimeZone(date, DEFAULT_TIME_ZONE);
+    const beans = await sumHostLedgerCredits(hostId, start, end);
+    last7Days.push({ date, beans, amountPaise: beans * paisePerBean });
   }
 
   return {

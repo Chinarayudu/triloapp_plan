@@ -12,6 +12,7 @@ import {
   initiateCall,
   listCallsForUser,
   rejectCall,
+  relayCallSignal,
 } from "./calls.service";
 import { submitRating } from "./ratings.service";
 
@@ -43,14 +44,14 @@ callsRouter.post(
   async (req, res, next) => {
     try {
       const { hostId, type } = req.body as z.infer<typeof initiateSchema>;
-      const { call, channelName, agoraToken, hostName } = await initiateCall(req.user!.sub, hostId, type);
+      const { call, channelName, hostName, mediaProvider, agoraToken, iceServers } = await initiateCall(req.user!.sub, hostId, type);
       // secureMode (BACKEND_PLAN.md §5, BR-MOD-03) — always true for 1:1
       // calls, not conditional on the 18+ toggle: this whole platform is
       // treated as sensitive-by-default (BACKEND_PLAN.md §3), unlike a live
       // broadcast where only specifically-flagged content needs it.
       res
         .status(201)
-        .json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, agoraToken, hostName });
+        .json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, mediaProvider, agoraToken, iceServers, hostName });
     } catch (err) {
       next(err);
     }
@@ -94,8 +95,8 @@ callsRouter.get("/calls/:id", requireAuth, async (req, res, next) => {
 
 callsRouter.post("/calls/:id/accept", requireAuth, requireRole("host"), async (req, res, next) => {
   try {
-    const { call, channelName, agoraToken, callerName } = await acceptCall(parseCallId(req.params.id), req.user!.sub);
-    res.json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, agoraToken, callerName });
+    const { call, channelName, callerName, mediaProvider, agoraToken, iceServers } = await acceptCall(parseCallId(req.params.id), req.user!.sub);
+    res.json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, mediaProvider, agoraToken, iceServers, callerName, userId: call.userId });
   } catch (err) {
     next(err);
   }
@@ -120,6 +121,38 @@ callsRouter.post("/calls/:id/end", requireAuth, async (req, res, next) => {
       totalAmountPaise: call.totalAmountPaise,
       totalBeans: call.totalBeans,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A few dozen messages per call at most (hello, offer/answer, ICE candidates,
+// plus an occasional ICE restart) — this only stops a runaway client loop.
+const signalLimiter = perUserRateLimit(60_000, 300);
+
+// Standard WebRTC setup messages. Bounded in size so this can't be used to
+// push arbitrary payloads through our socket to the other participant.
+const signalSchema = z.object({
+  data: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("hello") }),
+    z.object({ type: z.enum(["offer", "answer"]), sdp: z.string().min(1).max(20_000) }),
+    z.object({
+      type: z.literal("candidate"),
+      candidate: z.object({
+        candidate: z.string().max(1_000),
+        sdpMid: z.string().max(100).nullable().optional(),
+        sdpMLineIndex: z.number().int().min(0).max(100).nullable().optional(),
+        usernameFragment: z.string().max(256).nullable().optional(),
+      }),
+    }),
+  ]),
+});
+
+callsRouter.post("/calls/:id/signal", requireAuth, signalLimiter, validateBody(signalSchema), async (req, res, next) => {
+  try {
+    const { data } = req.body as z.infer<typeof signalSchema>;
+    await relayCallSignal(parseCallId(req.params.id), req.user!.sub, data);
+    res.status(204).end();
   } catch (err) {
     next(err);
   }

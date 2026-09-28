@@ -7,7 +7,7 @@ import { broadcastPresence } from "../../realtime/socket";
 import { followHost, listFollowedHosts, unfollowHost } from "./follow.service";
 import { listPublicGalleryItems } from "./gallery.service";
 import { getHostDetail, listHosts, HostListSort } from "./hosts.service";
-import { setOffline, setOnline } from "./presence.store";
+import { markHostOffline, markHostOnline } from "./onlineSessions.service";
 
 export const hostsRouter = Router();
 
@@ -69,13 +69,13 @@ hostsRouter.patch(
   requireAuth,
   requireRole("host"),
   validateBody(presenceSchema),
-  (req, res, next) => {
+  async (req, res, next) => {
     try {
       const { isOnline } = req.body as z.infer<typeof presenceSchema>;
       const hostId = req.user!.sub;
 
-      if (isOnline) setOnline(hostId);
-      else setOffline(hostId);
+      if (isOnline) await markHostOnline(hostId);
+      else await markHostOffline(hostId);
 
       broadcastPresence(hostId, isOnline);
       res.json({ isOnline });

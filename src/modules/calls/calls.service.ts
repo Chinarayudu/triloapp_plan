@@ -2,7 +2,6 @@ import { desc, eq } from "drizzle-orm";
 import { env } from "../../config/env";
 import { db } from "../../db/client";
 import { callBillingTicks, calls } from "../../db/schema";
-import { generateAgoraToken } from "../../lib/agoraToken";
 import { AppError } from "../../lib/errors";
 import { logger } from "../../lib/logger";
 import { sendPushNotification } from "../../lib/push";
@@ -20,6 +19,7 @@ import {
   transferUserToHost,
 } from "../wallet/wallet.service";
 import { isOnline } from "../hosts/presence.store";
+import { CallMediaCredentials, getCallMediaCredentials, getCurrentCallMediaProvider } from "./callMedia.service";
 import {
   clearRingingTimeout,
   clearTickInProgress,
@@ -101,7 +101,7 @@ export async function initiateCall(
   userId: string,
   hostId: string,
   type: CallRow["type"] = "video",
-): Promise<{ call: CallRow; channelName: string; agoraToken: string; hostName: string }> {
+): Promise<{ call: CallRow; channelName: string; hostName: string } & CallMediaCredentials> {
   const host = await getUserById(hostId);
   if (!host || host.role !== "host" || host.status !== "active") {
     throw new AppError(404, "Host not found");
@@ -146,6 +146,7 @@ export async function initiateCall(
 
   const commissionBasisPointsSnapshot = await getCurrentCommissionBasisPoints(hostId); // BR-COM-03: host override wins if active
   const paisePerBeanSnapshot = await getCurrentPaisePerBean();
+  const mediaProvider = await getCurrentCallMediaProvider();
   const caller = await getUserById(userId);
 
   const [call] = await db
@@ -158,6 +159,7 @@ export async function initiateCall(
       ratePerMinutePaiseSnapshot: ratePerMinutePaise,
       commissionBasisPointsSnapshot,
       paisePerBeanSnapshot,
+      mediaProvider,
     })
     .returning();
 
@@ -168,6 +170,8 @@ export async function initiateCall(
     userId,
     callerName: caller?.name ?? "Unknown",
     ratePerMinutePaise: call.ratePerMinutePaiseSnapshot,
+    type: call.type,
+    mediaProvider: call.mediaProvider,
   });
   // "Online" (presence.store.ts) means the host toggled availability, not
   // that their socket is live right now (BR-NOTIF-01) — a host who went
@@ -178,13 +182,14 @@ export async function initiateCall(
   }
 
   const channelName = channelNameFor(call.id);
-  return { call, channelName, agoraToken: generateAgoraToken(channelName, userId), hostName: host.name ?? "Unknown" };
+  const media = await getCallMediaCredentials(call.mediaProvider, channelName, userId);
+  return { call, channelName, hostName: host.name ?? "Unknown", ...media };
 }
 
 export async function acceptCall(
   callId: string,
   hostId: string,
-): Promise<{ call: CallRow; channelName: string; agoraToken: string; callerName: string }> {
+): Promise<{ call: CallRow; channelName: string; callerName: string } & CallMediaCredentials> {
   const call = await getCallById(callId);
   if (!call) throw new AppError(404, "Call not found");
   if (call.hostId !== hostId) throw new AppError(403, "Not your call");
@@ -205,12 +210,24 @@ export async function acceptCall(
   broadcastBusy(hostId, true);
 
   const caller = await getUserById(call.userId);
-  return {
-    call: updated,
-    channelName,
-    agoraToken: generateAgoraToken(channelName, hostId),
-    callerName: caller?.name ?? "Unknown",
-  };
+  const media = await getCallMediaCredentials(updated.mediaProvider, channelName, hostId);
+  return { call: updated, channelName, callerName: caller?.name ?? "Unknown", ...media };
+}
+
+// "p2p" calls only: the two apps exchange WebRTC connection setup (hello /
+// offer / answer / ICE candidates) through here — the server never looks
+// inside the payload, it just checks the sender is in this call and forwards
+// it to the other participant as call:signal. Allowed while ringing too, so
+// neither side's first message is refused in the instant around accept.
+export async function relayCallSignal(callId: string, senderId: string, data: unknown): Promise<void> {
+  const call = await getCallById(callId);
+  if (!call) throw new AppError(404, "Call not found");
+  if (call.userId !== senderId && call.hostId !== senderId) throw new AppError(403, "Not your call");
+  if (call.mediaProvider !== "p2p") throw new AppError(409, "This call doesn't use p2p media");
+  if (!ACTIVE_STATUSES.includes(call.status)) throw new AppError(409, `Call already ${call.status}`);
+
+  const recipientId = senderId === call.userId ? call.hostId : call.userId;
+  emitToUser(recipientId, "call:signal", { callId, fromUserId: senderId, data });
 }
 
 export async function rejectCall(callId: string, hostId: string): Promise<CallRow> {

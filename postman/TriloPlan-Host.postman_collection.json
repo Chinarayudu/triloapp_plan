@@ -136,6 +136,14 @@
       "key": "reportId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "todayIst",
+      "value": ""
+    },
+    {
+      "key": "sixDaysAgoIst",
+      "value": ""
     }
   ],
   "item": [
@@ -1224,8 +1232,55 @@
                 "{{callId}}",
                 "accept"
               ]
-            }
+            },
+            "description": "mediaProvider (\"agora\" | \"p2p\") says which network carries this call's media — admin-switchable (Admin → Pricing & Economics Config → Call Media Provider), fixed per call once created. \"agora\": join with agoraToken (iceServers is null). \"p2p\": connect directly with browser WebRTC using iceServers (agoraToken is null), exchanging setup messages via POST .../calls/:id/signal — see REALTIME_EVENTS.md call:signal. The host is always the answerer: it waits for the caller's offer."
           }
+        },
+        {
+          "name": "2b. Send p2p Signal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"data\": { \"type\": \"hello\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/host/calls/{{callId}}/signal",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "calls",
+                "{{callId}}",
+                "signal"
+              ]
+            },
+            "description": "p2p calls only — relays WebRTC setup to the other participant as the call:signal socket event (204, no body). data is one of { \"type\": \"hello\" }, { \"type\": \"offer\" | \"answer\", \"sdp\": \"...\" }, or { \"type\": \"candidate\", \"candidate\": { candidate, sdpMid, sdpMLineIndex, usernameFragment } }. Returns 409 when this call uses Agora (the default provider) — both outcomes are expected here, depending on the current Call Media Provider setting. The apps send these automatically (lib/p2p.js); this request is for inspecting the endpoint."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"204 for a p2p call, 409 for an Agora call\", function () { pm.expect([204, 409]).to.include(pm.response.code); });"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "3. Get Call",
@@ -1485,7 +1540,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"suggestedGiftId\": \"{{giftId}}\"\n}"
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"suggestedGiftId\": \"{{giftId}}\",\n  \"note\": \"Thanks for the lovely chat 🌹\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/host/gifts/request",
@@ -1498,7 +1553,7 @@
                 "request"
               ]
             },
-            "description": "\"Ask for a gift\" send action — a real-time prompt only, never moves money itself."
+            "description": "\"Ask for a gift\" send action — a real-time prompt only, never moves money itself. note is optional, max 140 characters, delivered to the user in gift:requested."
           }
         },
         {
@@ -1575,30 +1630,6 @@
     {
       "name": "Live Broadcasting",
       "item": [
-        {
-          "name": "Get Adult Mode Status",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{hostAccessToken}}",
-                "type": "text"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/host/live/adult-mode",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "host",
-                "live",
-                "adult-mode"
-              ]
-            }
-          }
-        },
         {
           "name": "1. Start Broadcast",
           "request": {
@@ -1918,7 +1949,188 @@
                 "breakdown"
               ]
             },
-            "description": "Breakdown screen — gross by source (video/voice/gifts/live), commission + TDS deductions, net payable. Defaults to the current calendar month; pass ?from=&to= (ISO datetimes) for a custom period."
+            "description": "Breakdown screen — gross by source (video/voice/gifts/live), commission + TDS deductions, net payable. Defaults to the current calendar month (IST). from/to accept either ISO datetimes (to exclusive) or YYYY-MM-DD dates, read as IST calendar days with to inclusive — from=to=<a date> is that one whole day."
+          }
+        },
+        {
+          "name": "Get Earnings Breakdown (single day)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ist = (offsetDays) => new Date(Date.now() + 5.5 * 3600 * 1000 + offsetDays * 86400 * 1000).toISOString().slice(0, 10);",
+                  "pm.collectionVariables.set('todayIst', ist(0));",
+                  "pm.collectionVariables.set('sixDaysAgoIst', ist(-6));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/me/earnings/breakdown?from={{todayIst}}&to={{todayIst}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "earnings",
+                "breakdown"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{todayIst}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{todayIst}}"
+                }
+              ]
+            },
+            "description": "Same endpoint, one IST day: from and to are the same YYYY-MM-DD date (to is inclusive for plain dates)."
+          }
+        },
+        {
+          "name": "Get Daily Report",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ist = (offsetDays) => new Date(Date.now() + 5.5 * 3600 * 1000 + offsetDays * 86400 * 1000).toISOString().slice(0, 10);",
+                  "pm.collectionVariables.set('todayIst', ist(0));",
+                  "pm.collectionVariables.set('sixDaysAgoIst', ist(-6));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('has online, earnings, calls', () => { pm.expect(b.online).to.be.an('object'); pm.expect(b.earnings.totalPaise).to.be.a('number'); pm.expect(b.calls.received).to.be.a('number'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/me/stats/daily?date={{todayIst}}&tz=Asia/Kolkata",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "stats",
+                "daily"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "{{todayIst}}"
+                },
+                {
+                  "key": "tz",
+                  "value": "Asia/Kolkata"
+                }
+              ]
+            },
+            "description": "Daily report screen — online time (merged sessions, including time in calls/live), earnings by source and call stats for one calendar day in tz (default Asia/Kolkata). Earnings are the host's share after commission, same basis as the dashboard's todayEarningsPaise. An open session has end: null — keep the timer running from online.asOf. 400 for a malformed or future date or an unknown tz."
+          }
+        },
+        {
+          "name": "Get Daily Summary (last 7 days)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ist = (offsetDays) => new Date(Date.now() + 5.5 * 3600 * 1000 + offsetDays * 86400 * 1000).toISOString().slice(0, 10);",
+                  "pm.collectionVariables.set('todayIst', ist(0));",
+                  "pm.collectionVariables.set('sixDaysAgoIst', ist(-6));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('7 days', () => pm.expect(pm.response.json().days).to.have.length(7));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/me/stats/daily-summary?from={{sixDaysAgoIst}}&to={{todayIst}}&tz=Asia/Kolkata",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "stats",
+                "daily-summary"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{sixDaysAgoIst}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{todayIst}}"
+                },
+                {
+                  "key": "tz",
+                  "value": "Asia/Kolkata"
+                }
+              ]
+            },
+            "description": "One row per day, from..to inclusive (max 31 days), zero days included: { date, earningsPaise, onlineSeconds, callsCount }. callsCount = answered calls."
           }
         },
         {
