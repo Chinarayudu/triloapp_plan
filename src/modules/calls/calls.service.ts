@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { env } from "../../config/env";
 import { db } from "../../db/client";
 import { callBillingTicks, calls, users } from "../../db/schema";
@@ -418,6 +418,43 @@ async function endCallForInsufficientBalance(call: CallRow): Promise<void> {
   };
   emitToUser(call.userId, "call:ended", summary);
   emitToUser(call.hostId, "call:ended", summary);
+}
+
+// A party's app was killed or lost its network mid-call and never came back
+// (realtime/socket.ts's checkAbandonedCall). Billing is server-side and keeps
+// ticking on its own, so without this the call stayed "ongoing" — host stuck
+// busy, user charged every tick — until the user's balance ran out.
+export async function endCallForLostConnection(accountId: string): Promise<CallRow | null> {
+  const [call] = await db
+    .select()
+    .from(calls)
+    .where(and(eq(calls.status, "ongoing"), or(eq(calls.userId, accountId), eq(calls.hostId, accountId))))
+    .limit(1);
+  if (!call) return null;
+
+  stopBillingInterval(call.id);
+  // Guarded on status so a hang-up landing at the same moment wins cleanly
+  // instead of the call being ended twice.
+  const [updated] = await db
+    .update(calls)
+    .set({ status: "completed", endedAt: new Date(), endReason: "connection_lost", updatedAt: new Date() })
+    .where(and(eq(calls.id, call.id), eq(calls.status, "ongoing")))
+    .returning();
+  if (!updated) return null;
+
+  broadcastBusy(call.hostId, false);
+  await checkCollusionSafely(call.hostId, call.userId);
+
+  const summary = {
+    callId: call.id,
+    status: updated.status,
+    totalAmountPaise: updated.totalAmountPaise,
+    totalBeans: updated.totalBeans,
+    endReason: updated.endReason,
+  };
+  emitToUser(call.userId, "call:ended", summary);
+  emitToUser(call.hostId, "call:ended", summary);
+  return updated;
 }
 
 // The actual scheduled interval calls this every TICK_INTERVAL_MS in

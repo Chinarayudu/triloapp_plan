@@ -4,7 +4,8 @@ import request from "supertest";
 import { io as ioClient, Socket } from "socket.io-client";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../../app";
-import { createSocketServer } from "../../realtime/socket";
+import { checkAbandonedCall, createSocketServer, isUserConnected } from "../../realtime/socket";
+import { runBillingTick } from "./calls.service";
 import { fundUserWallet, registerAndLogin } from "../../test/helpers";
 
 describe("Calls: live notifications over socket", () => {
@@ -127,5 +128,54 @@ describe("Calls: live notifications over socket", () => {
       { hostId: host.user.id, isBusy: false },
     ]);
     expect(await isBusyInApi()).toBe(false);
+  });
+
+  it("ends an ongoing call when a party drops and never reconnects, freeing the host and stopping billing", async () => {
+    const app = createApp();
+    httpServer = createServer(app);
+    createSocketServer(httpServer);
+    await new Promise<void>((resolve) => httpServer!.listen(0, resolve));
+    const port = (httpServer.address() as AddressInfo).port;
+
+    const host = await registerAndLogin(app, "host");
+    await request(app).patch("/host/me/presence").set("Authorization", `Bearer ${host.accessToken}`).send({ isOnline: true });
+    const user = await registerAndLogin(app, "user");
+    await fundUserWallet(app, user.accessToken, 10000);
+
+    const connect = (token: string) =>
+      new Promise<Socket>((resolve, reject) => {
+        const socket = ioClient(`http://localhost:${port}`, { auth: { token } });
+        socket.on("connect", () => resolve(socket));
+        socket.on("connect_error", reject);
+      });
+    userSocket = await connect(user.accessToken);
+    hostSocket = await connect(host.accessToken);
+
+    const initiate = await request(app).post("/user/calls").set("Authorization", `Bearer ${user.accessToken}`).send({ hostId: host.user.id });
+    const callId = initiate.body.callId as string;
+    await request(app).post(`/host/calls/${callId}/accept`).set("Authorization", `Bearer ${host.accessToken}`);
+    const hostAuth = { Authorization: `Bearer ${host.accessToken}` };
+
+    // Still connected: the grace-period check must leave the call alone.
+    await checkAbandonedCall(user.user.id);
+    expect((await request(app).get(`/host/calls/${callId}`).set(hostAuth)).body.status).toBe("ongoing");
+
+    // The user's app dies (lost network or killed) and never reconnects.
+    userSocket.close();
+    for (let i = 0; i < 50 && (await isUserConnected(user.user.id)); i++) await new Promise((r) => setTimeout(r, 20));
+
+    const hostEnded = new Promise<{ callId: string; status: string; endReason: string }>((resolve) =>
+      hostSocket!.on("call:ended", resolve),
+    );
+    await checkAbandonedCall(user.user.id);
+
+    expect(await hostEnded).toMatchObject({ callId, status: "completed", endReason: "connection_lost" });
+    const call = (await request(app).get(`/host/calls/${callId}`).set(hostAuth)).body;
+    expect(call.status).toBe("completed");
+    expect(call.endReason).toBe("connection_lost");
+    // Host is free again, and billing has stopped.
+    const detail = await request(app).get(`/user/hosts/${host.user.id}`).set("Authorization", `Bearer ${user.accessToken}`);
+    expect(detail.body.isBusy).toBe(false);
+    expect(await runBillingTick(callId)).toEqual({ billed: false });
   });
 });

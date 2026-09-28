@@ -51,6 +51,8 @@ export default defineConfig({
       // Tests exercise the grace-period check itself by calling
       // checkAbandonedBroadcast (realtime/socket.ts) directly.
       LIVE_BROADCAST_DISCONNECT_GRACE_MS: "600000",
+      // Same for calls — tests call checkAbandonedCall directly.
+      CALL_DISCONNECT_GRACE_MS: "600000",
     },
   },
 });

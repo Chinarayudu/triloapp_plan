@@ -3,6 +3,7 @@ import { Server as SocketIOServer } from "socket.io";
 import { env } from "../config/env";
 import { verifyAccessToken } from "../lib/jwt";
 import { logger } from "../lib/logger";
+import { endCallForLostConnection } from "../modules/calls/calls.service";
 import { markHostOffline } from "../modules/hosts/onlineSessions.service";
 import { isOnline as isHostMarkedOnline } from "../modules/hosts/presence.store";
 import { endActiveBroadcastForHostIfAny, liveRoomName } from "../modules/live/live.service";
@@ -68,6 +69,14 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
           logger.error({ err, userId }, "Auto-end-broadcast-on-disconnect check failed"),
         );
       }, env.LIVE_BROADCAST_DISCONNECT_GRACE_MS).unref();
+
+      // Either party of an ongoing call (user or host). Without this, a
+      // killed app or lost network left the call "ongoing" indefinitely —
+      // host shown busy, user billed every tick — since the apps only end a
+      // call from the hang-up button and billing runs server-side.
+      setTimeout(() => {
+        void checkAbandonedCall(userId).catch((err) => logger.error({ err, userId }, "Auto-end-call-on-disconnect check failed"));
+      }, env.CALL_DISCONNECT_GRACE_MS).unref();
     });
   });
 
@@ -88,6 +97,16 @@ export async function checkAbandonedBroadcast(hostId: string): Promise<void> {
   if (ended) {
     emitToRoom(liveRoomName(ended.id), "live:ended", { broadcastId: ended.id });
     logger.warn({ hostId, broadcastId: ended.id }, "Auto-ended a live broadcast — host's connection never reconnected");
+  }
+}
+
+// Exported for the same reason as checkAbandonedBroadcast above: tests call
+// it directly instead of waiting on the real grace timer.
+export async function checkAbandonedCall(accountId: string): Promise<void> {
+  if (await isUserConnected(accountId)) return;
+  const ended = await endCallForLostConnection(accountId);
+  if (ended) {
+    logger.warn({ accountId, callId: ended.id }, "Auto-ended a call — a party's connection never reconnected");
   }
 }
 

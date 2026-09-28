@@ -28,6 +28,11 @@ const envSchema = z.object({
   // Directly callable outside the timer too (checkAbandonedBroadcast is
   // exported specifically so tests don't wait on a real disconnect timer).
   LIVE_BROADCAST_DISCONNECT_GRACE_MS: z.coerce.number().int().positive().default(15_000),
+  // Same idea for a 1:1 call: how long either party's dropped connection
+  // gets to come back before the ongoing call is ended (realtime/socket.ts's
+  // checkAbandonedCall). Billing keeps running during this window, so keep
+  // it short — it only needs to cover a brief network blip or app reload.
+  CALL_DISCONNECT_GRACE_MS: z.coerce.number().int().positive().default(20_000),
   // Optional as a group — otpSender.ts falls back to dev-mode logging when
   // any of these is missing. All three or none; there's no valid
   // partially-configured state.
