@@ -20,6 +20,15 @@ Copy this for each new entry, filled in, added to the top of the log below.
 
 ## Log
 
+### [2026-10-04] Cashfree Payouts dashboard "Webhook test failed. The server responded with status code 401"
+
+**Symptom**: Adding `https://triloapp-plan.onrender.com/payments/cashfree/payout-webhook` in Cashfree Payouts → Developers → Webhooks fails the dashboard's test with `{"message":"Webhook test failed. The server responded with status code 401.","title":"REQUEST_INVALID"}`. The dashboard calls `.../cashgramuiapi/.../v1/payout/webhook/test` (`api-version: 2021-02-02`, `contentType: "JSON"`) and offers no V2 option.
+**Root cause**: The account's Payouts webhooks are **V1**, which put the signature in a `signature` field in the body (HMAC-SHA256 over the other fields' values sorted by field name, Payouts client secret). Our handler only accepted **V2** (`x-webhook-signature` + `x-webhook-timestamp` headers over `timestamp + rawBody`), so every V1 request failed verification. Not a key problem: a self-signed V2 request to the deployed URL returned 200, and an unsigned one returned 401.
+**Affected files**: `src/lib/payout.ts` (new `isValidPayoutWebhookV1Signature`), `src/modules/payments/cashfreeWebhook.routes.ts` (payout route parses JSON or form bodies, verifies V2 if the header is present else V1, reads `transferId`/`event` for V1 vs `data.transfer_id`/`type` for V2, and logs content type / which signature fields were present on rejection), `src/modules/payments/payouts.cashfree.test.ts`.
+**Fix**: Accept both webhook versions instead of assuming V2. Settlement is unchanged — the webhook still only identifies the transfer, and `syncPayoutWithGateway` settles from Cashfree's own transfer status, so a webhook can't fake an outcome either way.
+**Call sites checked**: `isValidPayoutWebhookSignature` (V2) — only the payout webhook route, behavior unchanged for V2. PG webhook (`/payments/cashfree/webhook`, PG secret) untouched. `syncPayoutWithGateway` / `getWithdrawalByPayoutTxnId` unchanged. `tsc --noEmit`; payments tests 15/15 (new: V1 JSON + form accepted, forged V1 rejected, V1 test webhook for an unknown transfer → 200); full suite 170/176 with the same 6 pre-existing test-DB-pollution failures (withdrawal policy min ₹1000, admin top-earners) as before this change.
+**General lesson**: Cashfree's webhook format depends on a per-account version setting, not just the API version we call — accept every format the dashboard can send, and log enough on rejection (content type, which signature fields exist) to tell a format mismatch from a key mismatch.
+
 ### [2026-10-04] Host's video looks softer in the User app than the user's video looks in the Host app
 
 **Symptom**: In a call, the video shown in the User app (the host's camera) looked lower quality than the video in the Host app (the user's camera).

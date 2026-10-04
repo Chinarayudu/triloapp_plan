@@ -1,7 +1,7 @@
 import express, { Router } from "express";
 import { isValidCashfreeWebhookSignature } from "../../lib/cashfree";
 import { logger } from "../../lib/logger";
-import { isValidPayoutWebhookSignature } from "../../lib/payout";
+import { isValidPayoutWebhookSignature, isValidPayoutWebhookV1Signature } from "../../lib/payout";
 import { getRechargeTxnByGatewayOrderId, syncRechargeWithGateway } from "../wallet/recharge.service";
 import { getWithdrawalByPayoutTxnId, syncPayoutWithGateway } from "../withdrawals/withdrawal.service";
 import { getVipPurchaseByGatewayOrderId, syncVipPurchaseWithGateway } from "../wallet/vip.service";
@@ -71,28 +71,51 @@ cashfreeWebhookRouter.post("/payments/cashfree/webhook", express.raw({ type: "*/
   }
 });
 
-// Cashfree Payouts v2 webhook (host withdrawals) — configured in the Payouts
-// dashboard, not per transfer. Signed with the Payouts client secret, not the
-// PG one. Same rules as above: verify the raw body, use the payload only to
-// find the request, settle from Cashfree's own transfer status.
+// Cashfree Payouts webhook (host withdrawals) — configured in the Payouts
+// dashboard, not per transfer. Accepts both versions the dashboard can send:
+// V2 (JSON, signature in headers) and V1 (JSON or form, signature in the body),
+// both signed with the Payouts client secret, not the PG one. Same rules as
+// above: verify, use the payload only to find the request, settle from
+// Cashfree's own transfer status.
 cashfreeWebhookRouter.post("/payments/cashfree/payout-webhook", express.raw({ type: "*/*" }), async (req, res) => {
   const rawBody = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
-  if (!isValidPayoutWebhookSignature(rawBody, req.header("x-webhook-timestamp"), req.header("x-webhook-signature"))) {
-    logger.warn({ path: req.path }, "Rejected Cashfree Payouts webhook with an invalid signature");
+  const contentType = req.header("content-type") ?? "";
+
+  // The body as fields — JSON or form-encoded (V1 can be either).
+  let fields: Record<string, any>;
+  try {
+    fields = contentType.includes("application/x-www-form-urlencoded")
+      ? Object.fromEntries(new URLSearchParams(rawBody))
+      : JSON.parse(rawBody);
+  } catch {
+    logger.warn({ contentType }, "Rejected Cashfree Payouts webhook with an unparseable body");
+    res.status(400).json({ error: "Invalid body" });
+    return;
+  }
+
+  // V2 signs in headers; V1 (legacy, and the dashboard's test) signs in the body.
+  const v2Signature = req.header("x-webhook-signature");
+  const valid = v2Signature
+    ? isValidPayoutWebhookSignature(rawBody, req.header("x-webhook-timestamp"), v2Signature)
+    : isValidPayoutWebhookV1Signature(fields);
+  if (!valid) {
+    logger.warn(
+      {
+        contentType,
+        hasV2SignatureHeader: Boolean(v2Signature),
+        hasV2TimestampHeader: Boolean(req.header("x-webhook-timestamp")),
+        hasV1SignatureField: typeof fields?.signature === "string",
+        fieldNames: fields && typeof fields === "object" ? Object.keys(fields) : [],
+        event: fields?.type ?? fields?.event,
+      },
+      "Rejected Cashfree Payouts webhook with an invalid signature",
+    );
     res.status(401).json({ error: "Invalid signature" });
     return;
   }
 
-  let transferId: unknown;
-  let type: unknown;
-  try {
-    const payload = JSON.parse(rawBody);
-    transferId = payload?.data?.transfer_id;
-    type = payload?.type;
-  } catch {
-    res.status(400).json({ error: "Invalid JSON" });
-    return;
-  }
+  const transferId: unknown = v2Signature ? fields?.data?.transfer_id : fields.transferId;
+  const type: unknown = v2Signature ? fields?.type : fields.event;
   if (typeof transferId !== "string") {
     logger.info({ type }, "Cashfree Payouts webhook without a transfer id (e.g. balance alert) — ignored");
     res.json({ ok: true });

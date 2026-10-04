@@ -183,6 +183,44 @@ describe("Cashfree payouts (host withdrawals)", () => {
     expect(await beanBalance(host.user.id)).toBe(0);
   });
 
+  it("accepts V1-format webhooks (signature in the body, JSON or form) and rejects forged ones", async () => {
+    const app = createApp();
+    const { row } = await pendingWithdrawal(app);
+    const { payoutTxnId } = await decideWithdrawal(row.id, "approve");
+    transfers.get(payoutTxnId!)!.status = "SUCCESS";
+
+    // Cashfree V1: HMAC over the other fields' values, sorted by field name.
+    const fields = { event: "TRANSFER_SUCCESS", transferId: payoutTxnId!, referenceId: "667391662", acknowledged: "1", eventTime: "2026-10-04 12:00:00" };
+    const signedData = Object.keys(fields).sort().map((k) => fields[k as keyof typeof fields]).join("");
+    const signature = createHmac("sha256", SECRET).update(signedData).digest("base64");
+
+    const forged = await request(app)
+      .post("/payments/cashfree/payout-webhook")
+      .set("Content-Type", "application/json")
+      .send(JSON.stringify({ ...fields, signature: createHmac("sha256", "wrong").update(signedData).digest("base64") }));
+    expect(forged.status).toBe(401);
+    expect((await getWithdrawalById(row.id))!.status).toBe("processing");
+
+    const json = await request(app).post("/payments/cashfree/payout-webhook").set("Content-Type", "application/json").send(JSON.stringify({ ...fields, signature }));
+    expect(json.status).toBe(200);
+    expect((await getWithdrawalById(row.id))!.status).toBe("paid");
+
+    const form = await request(app)
+      .post("/payments/cashfree/payout-webhook")
+      .set("Content-Type", "application/x-www-form-urlencoded")
+      .send(new URLSearchParams({ ...fields, signature }).toString());
+    expect(form.status).toBe(200);
+  });
+
+  it("a validly signed V1 dashboard test webhook for a transfer we don't know is acknowledged (200)", async () => {
+    const app = createApp();
+    const fields = { event: "TRANSFER_SUCCESS", transferId: "dashboard_test_123", referenceId: "1" };
+    const signedData = Object.keys(fields).sort().map((k) => fields[k as keyof typeof fields]).join("");
+    const signature = createHmac("sha256", SECRET).update(signedData).digest("base64");
+    const res = await request(app).post("/payments/cashfree/payout-webhook").set("Content-Type", "application/json").send(JSON.stringify({ ...fields, signature }));
+    expect(res.status).toBe(200);
+  });
+
   it("dev-resolve can't fake the outcome of a real Cashfree payout", async () => {
     const app = createApp();
     const { host, row } = await pendingWithdrawal(app);

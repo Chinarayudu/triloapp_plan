@@ -140,7 +140,30 @@ export async function getPayoutOutcome(transferId: string): Promise<{ outcome: P
 export function isValidPayoutWebhookSignature(rawBody: string, timestamp: string | undefined, signature: string | undefined): boolean {
   if (!timestamp || !signature || !env.CASHFREE_PAYOUT_CLIENT_SECRET) return false;
   const expected = createHmac("sha256", env.CASHFREE_PAYOUT_CLIENT_SECRET).update(timestamp + rawBody).digest("base64");
+  return safeEqual(expected, signature);
+}
+
+// Payouts V1 webhooks (legacy — and what the Payouts dashboard's "Test webhook"
+// sends when the account is on V1): the signature is a `signature` field in the
+// body, JSON or form-encoded. base64(HMAC-SHA256(every other non-empty field's
+// value, sorted by field name, concatenated, Payouts client secret)).
+// https://www.cashfree.com/docs/api-reference/payouts/v2/webhooks/webhooks-v1
+export function isValidPayoutWebhookV1Signature(fields: Record<string, unknown>): boolean {
+  const signature = fields.signature;
+  if (typeof signature !== "string" || !env.CASHFREE_PAYOUT_CLIENT_SECRET) return false;
+  const signedData = Object.keys(fields)
+    .filter((key) => key !== "signature")
+    .sort()
+    .map((key) => fields[key])
+    .filter((value) => value !== null && value !== undefined && value !== "")
+    .map((value) => (typeof value === "object" ? JSON.stringify(value) : String(value)))
+    .join("");
+  const expected = createHmac("sha256", env.CASHFREE_PAYOUT_CLIENT_SECRET).update(signedData).digest("base64");
+  return safeEqual(expected, signature);
+}
+
+function safeEqual(expected: string, actual: string): boolean {
   const a = Buffer.from(expected);
-  const b = Buffer.from(signature);
+  const b = Buffer.from(actual);
   return a.length === b.length && timingSafeEqual(a, b);
 }
