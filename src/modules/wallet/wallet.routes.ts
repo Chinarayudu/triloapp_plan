@@ -5,7 +5,13 @@ import { env } from "../../config/env";
 import { AppError } from "../../lib/errors";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
-import { devResolveRecharge, getRechargeTxnById, initiateRecharge, listRechargePackages } from "./recharge.service";
+import {
+  devResolveRecharge,
+  getRechargeTxnById,
+  initiateRecharge,
+  listRechargePackages,
+  syncRechargeWithGateway,
+} from "./recharge.service";
 import {
   creditUserWallet,
   getCurrentPaisePerBean,
@@ -53,9 +59,9 @@ walletRouter.get("/wallet/recharge-packages", requireAuth, async (_req, res, nex
 
 const initiateRechargeSchema = z.object({ packageId: z.string().uuid() });
 
-// Order-creation step (BACKEND_PLAN.md §2 step 1) — "Processing payment"
-// screen. The actual gateway call is dev-stubbed below (no real gateway
-// wired up yet, §3), same pattern as withdrawal.service.ts's payout stub.
+// Order-creation step (BACKEND_PLAN.md §2 step 1). Returns the txn plus
+// paymentSessionId/checkoutMode for Cashfree's checkout SDK; both are null
+// when Cashfree isn't configured (dev-stub — settle via dev-resolve below).
 walletRouter.post(
   "/wallet/recharge/initiate",
   requireAuth,
@@ -79,7 +85,9 @@ walletRouter.get("/wallet/recharge/:id", requireAuth, requireRole("user"), async
     const txn = await getRechargeTxnById(id.data);
     if (!txn) throw new AppError(404, "Recharge transaction not found");
     if (txn.userId !== req.user!.sub) throw new AppError(403, "Not your recharge");
-    res.json(txn);
+    // The app polls this after checkout — confirm with Cashfree here so a slow
+    // or lost webhook never leaves a paid recharge uncredited.
+    res.json(await syncRechargeWithGateway(txn));
   } catch (err) {
     next(err);
   }
@@ -87,7 +95,7 @@ walletRouter.get("/wallet/recharge/:id", requireAuth, requireRole("user"), async
 
 const devResolveRechargeSchema = z.object({ outcome: z.enum(["success", "failed"]) });
 
-// Stands in for the payment gateway's webhook — non-prod only, same
+// Fakes the payment outcome without Cashfree — non-prod only, same
 // hard-block convention as every other dev escape hatch in this codebase.
 walletRouter.post(
   "/wallet/recharge/:id/dev-resolve",

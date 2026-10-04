@@ -53,6 +53,13 @@ export default defineConfig({
       LIVE_BROADCAST_DISCONNECT_GRACE_MS: "600000",
       // Same for calls — tests call checkAbandonedCall directly.
       CALL_DISCONNECT_GRACE_MS: "600000",
+      // .env holds real Cashfree sandbox keys — blank them so tests never make
+      // network calls to Cashfree. Recharge/VIP then run their dev-stub path;
+      // payments.cashfree.test.ts sets its own fake keys and stubs fetch.
+      CASHFREE_PG_APP_ID: "",
+      CASHFREE_PG_SECRET_KEY: "",
+      CASHFREE_PAYOUT_CLIENT_ID: "",
+      CASHFREE_PAYOUT_CLIENT_SECRET: "",
     },
   },
 });

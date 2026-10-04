@@ -76,25 +76,38 @@ export async function creditUserWallet(
   referenceId: string | null,
   idempotencyKey: string,
 ): Promise<{ balanceAfter: number }> {
-  return db.transaction(async (tx) => {
-    const [row] = await tx.select().from(wallets).where(eq(wallets.userId, userId)).for("update");
-    if (!row) throw new Error(`No wallet row for user ${userId}`);
+  return db.transaction((tx) => creditUserWalletInTx(tx, userId, amountPaise, referenceType, referenceId, idempotencyKey));
+}
 
-    const balanceAfter = row.balancePaise + amountPaise;
-    await tx.update(wallets).set({ balancePaise: balanceAfter, updatedAt: new Date() }).where(eq(wallets.userId, userId));
-    await tx.insert(ledgerEntries).values({
-      walletType: "user",
-      ownerId: userId,
-      direction: "credit",
-      amount: amountPaise,
-      referenceType,
-      referenceId,
-      balanceAfter,
-      idempotencyKey,
-    });
+// Same credit, inside the caller's transaction — recharge settlement
+// (recharge.service.ts) flips the txn to "success" and credits the wallet as
+// one unit, so a crash between the two can't leave a paid recharge uncredited
+// or credited twice.
+export async function creditUserWalletInTx(
+  tx: Tx,
+  userId: string,
+  amountPaise: number,
+  referenceType: LedgerReferenceType,
+  referenceId: string | null,
+  idempotencyKey: string,
+): Promise<{ balanceAfter: number }> {
+  const [row] = await tx.select().from(wallets).where(eq(wallets.userId, userId)).for("update");
+  if (!row) throw new Error(`No wallet row for user ${userId}`);
 
-    return { balanceAfter };
+  const balanceAfter = row.balancePaise + amountPaise;
+  await tx.update(wallets).set({ balancePaise: balanceAfter, updatedAt: new Date() }).where(eq(wallets.userId, userId));
+  await tx.insert(ledgerEntries).values({
+    walletType: "user",
+    ownerId: userId,
+    direction: "credit",
+    amount: amountPaise,
+    referenceType,
+    referenceId,
+    balanceAfter,
+    idempotencyKey,
   });
+
+  return { balanceAfter };
 }
 
 // Takes the caller's own transaction (like transferUserToHost below) so a

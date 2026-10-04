@@ -2,6 +2,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../../db/client";
 import { liveBroadcasts, liveViewers, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
+import { closeLiveChannelIfEnabled, getCurrentLiveMediaConfig } from "./liveMedia.service";
 
 type LiveBroadcast = typeof liveBroadcasts.$inferSelect;
 
@@ -28,7 +29,8 @@ export async function startBroadcast(hostId: string): Promise<LiveBroadcast> {
     throw new AppError(409, "You already have a live broadcast running");
   }
 
-  const [broadcast] = await db.insert(liveBroadcasts).values({ hostId }).returning();
+  const { provider } = await getCurrentLiveMediaConfig();
+  const [broadcast] = await db.insert(liveBroadcasts).values({ hostId, mediaProvider: provider }).returning();
   return broadcast;
 }
 
@@ -47,6 +49,7 @@ async function endBroadcastById(broadcastId: string): Promise<LiveBroadcast> {
     .set({ leftAt: new Date() })
     .where(and(eq(liveViewers.broadcastId, broadcastId), isNull(liveViewers.leftAt)));
 
+  void closeLiveChannelIfEnabled(liveRoomName(broadcastId), updated.mediaProvider);
   return updated;
 }
 

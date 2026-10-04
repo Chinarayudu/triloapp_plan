@@ -176,6 +176,20 @@
       "when": 1790586894771,
       "tag": "0024_host_online_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790872092216,
+      "tag": "0025_media_cost_optimisation",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791096151063,
+      "tag": "0026_cashfree_payments",
+      "breakpoints": true
     }
   ]
 }

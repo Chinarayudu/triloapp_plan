@@ -1233,7 +1233,7 @@
                 "accept"
               ]
             },
-            "description": "mediaProvider (\"agora\" | \"p2p\") says which network carries this call's media — admin-switchable (Admin → Pricing & Economics Config → Call Media Provider), fixed per call once created. \"agora\": join with agoraToken (iceServers is null). \"p2p\": connect directly with browser WebRTC using iceServers (agoraToken is null), exchanging setup messages via POST .../calls/:id/signal — see REALTIME_EVENTS.md call:signal. The host is always the answerer: it waits for the caller's offer."
+            "description": "mediaProvider (\"agora\" | \"p2p\") says which network carries this call's media — admin-switchable (Admin → Pricing & Economics Config → Call Media Provider), fixed per call once created. \"agora\": join with agoraToken (iceServers is null). \"p2p\": connect directly with browser WebRTC using iceServers (agoraToken is null), exchanging setup messages via POST .../calls/:id/signal — see REALTIME_EVENTS.md call:signal. The host is always the answerer: it waits for the caller's offer. Media: mediaProvider is \"agora\" (use agoraToken) or \"p2p\" (use iceServers). agoraFallbackAllowed: true means this p2p call may switch to Agora if the direct connection can't be made (2c. Fall Back to Agora)."
           }
         },
         {
@@ -1277,6 +1277,43 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"204 for a p2p call, 409 for an Agora call\", function () { pm.expect([204, 409]).to.include(pm.response.code); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2c. Fall Back to Agora (auto calls)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/calls/{{callId}}/media-fallback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "calls",
+                "{{callId}}",
+                "media-fallback"
+              ]
+            },
+            "description": "For calls with agoraFallbackAllowed: true (admin call media mode \"auto\") whose direct p2p connection couldn't be established. Moves the ongoing call to Agora and returns { callId, channelName, mediaProvider: \"agora\", agoraToken, iceServers: null, agoraFallbackAllowed }; the caller gets the call:media-fallback socket event with its own token. Safe to call from both sides. 409 if the call isn't ongoing or isn't an auto call — the expected outcome on the default Agora setting."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 for an ongoing auto call, 409 otherwise\", function () { pm.expect([200,409]).to.include(pm.response.code); });"
                 ]
               }
             }
@@ -1332,6 +1369,52 @@
             },
             "description": "\"Call ended\" screen's summary numbers come from this response."
           }
+        },
+        {
+          "name": "4b. Report Call Media Quality",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/calls/{{callId}}/media-report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "calls",
+                "{{callId}}",
+                "media-report"
+              ]
+            },
+            "description": "Sent once by the app when a call ends — connection quality for the admin p2p-vs-Agora comparison. Only connected is required; relayed applies to p2p calls (true = went through the TURN relay). 204, no body; a repeat for the same call is ignored. 409 if the call never connected.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"connected\": true,\n  \"connectMs\": 1500,\n  \"relayed\": false,\n  \"avgRttMs\": 120,\n  \"packetLossPercent\": 0.4,\n  \"avgVideoKbps\": 950\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"204 for a connected call, 409 if it never connected\", function () { pm.expect([204,409]).to.include(pm.response.code); });"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "5. Submit Rating",
@@ -1715,7 +1798,7 @@
                 "broadcasts"
               ]
             },
-            "description": "\"Go live\" screen's \"Start broadcast\" action."
+            "description": "\"Go live\" screen's \"Start broadcast\" action. Response includes mediaProvider: \"agora\" → publish to the Agora channel with agoraToken; \"cloudflare\" → agoraToken is null; open an RTCPeerConnection with iceServers, add camera + mic, and send the offer with 1b. Publish via Cloudflare."
           },
           "event": [
             {
@@ -1726,6 +1809,54 @@
                   "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
                   "var jsonData = pm.response.json();",
                   "pm.collectionVariables.set(\"liveBroadcastId\", jsonData.broadcastId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1b. Publish via Cloudflare",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/live/broadcasts/{{liveBroadcastId}}/sfu/publish",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "live",
+                "broadcasts",
+                "{{liveBroadcastId}}",
+                "sfu",
+                "publish"
+              ]
+            },
+            "description": "\"cloudflare\" broadcasts only. sdp = the app's offer; tracks = each sent track's transceiver mid and a name viewers pull it by. Returns { sdp } — the SFU's answer, to set as the remote description. Viewers are told via live:media-updated. Call again after a reconnect to republish. 409 when the broadcast uses Agora — the expected outcome on the default setting.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sdp\": \"v=0 (the app's SDP offer)\",\n  \"tracks\": [\n    {\n      \"mid\": \"0\",\n      \"trackName\": \"video\"\n    },\n    {\n      \"mid\": \"1\",\n      \"trackName\": \"audio\"\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 for a cloudflare broadcast, 409 otherwise\", function () { pm.expect([200,409]).to.include(pm.response.code); });"
                 ]
               }
             }
@@ -1828,7 +1959,7 @@
                 "withdrawals"
               ]
             },
-            "description": "Confirm-withdrawal screen — response now includes processingFeePaise/tdsPaise/netPayoutPaise alongside the existing convertedAmountPaise (gross)."
+            "description": "Confirm-withdrawal screen — response now includes processingFeePaise/tdsPaise/netPayoutPaise alongside the existing convertedAmountPaise (gross). When the request is auto-approved (or later approved by admin), the backend starts a real Cashfree Payouts transfer of netPayoutPaise to the primary payout method (status -> processing). Cashfree's signed webhook / status check then moves it to paid, or to failed with the beans returned."
           },
           "event": [
             {
@@ -1863,7 +1994,8 @@
                 "host",
                 "withdrawals"
               ]
-            }
+            },
+            "description": "Lists the host's requests; any still processing are re-checked with Cashfree first."
           }
         },
         {
@@ -1887,7 +2019,8 @@
                 "withdrawals",
                 "{{withdrawalId}}"
               ]
-            }
+            },
+            "description": "Re-checks a processing payout with Cashfree before returning it."
           }
         },
         {
@@ -1922,7 +2055,7 @@
                 "dev-resolve-payout"
               ]
             },
-            "description": "Stands in for the payout gateway's webhook — no real gateway configured yet. \"Paid out\" screen."
+            "description": "Fakes the outcome - ONLY for dev-stub payouts (backend without Cashfree Payouts keys). A real Cashfree payout returns 409 here; its outcome comes from Cashfree."
           }
         }
       ]

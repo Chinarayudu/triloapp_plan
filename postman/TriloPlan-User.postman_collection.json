@@ -122,6 +122,11 @@
       "type": "string"
     },
     {
+      "key": "vipPurchaseId",
+      "value": "",
+      "type": "string"
+    },
+    {
       "key": "vipSubscriptionId",
       "value": "",
       "type": "string"
@@ -134,6 +139,11 @@
     {
       "key": "grievanceEvidenceKey",
       "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sfuSessionId",
+      "value": "none",
       "type": "string"
     }
   ],
@@ -1094,7 +1104,8 @@
                 "recharge",
                 "initiate"
               ]
-            }
+            },
+            "description": "Creates the recharge and, when the backend has Cashfree configured, a Cashfree order. Response adds paymentSessionId + checkoutMode (\"sandbox\"/\"production\") — the app passes them to Cashfree checkout (cashfree.js). Both are null without Cashfree (dev-stub — use step 4)."
           },
           "event": [
             {
@@ -1132,7 +1143,8 @@
                 "recharge",
                 "{{rechargeTxnId}}"
               ]
-            }
+            },
+            "description": "The app polls this after checkout. For a Cashfree recharge it re-checks the order with Cashfree first, so it flips to success (and credits the wallet, exactly once) even if the webhook is late."
           }
         },
         {
@@ -1168,7 +1180,7 @@
                 "dev-resolve"
               ]
             },
-            "description": "Stands in for the payment gateway's webhook — non-prod only. outcome can also be \"failed\" (\"Payment failed\" screen)."
+            "description": "Fakes the payment outcome without Cashfree — non-prod only. outcome can also be \"failed\" (\"Payment failed\" screen)."
           }
         }
       ]
@@ -1245,7 +1257,7 @@
                 "subscribe"
               ]
             },
-            "description": "Dev-stubbed payment (no real gateway yet) — activates immediately. Resubscribing while already active extends from the current expiry rather than from now."
+            "description": "Starts a PAID purchase: returns { id, status: \"created\", amountPaise, paymentSessionId, checkoutMode, subscriptionId: null }. VIP is NOT active yet — it activates once the payment is confirmed (Cashfree webhook, or Get VIP Purchase Status after checkout). Paying again while active extends from the current expiry."
           },
           "event": [
             {
@@ -1255,14 +1267,88 @@
                 "exec": [
                   "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
                   "var jsonData = pm.response.json();",
-                  "pm.collectionVariables.set(\"vipSubscriptionId\", jsonData.id);"
+                  "pm.collectionVariables.set(\"vipPurchaseId\", jsonData.id);"
                 ]
               }
             }
           ]
         },
         {
-          "name": "3. List My Subscriptions",
+          "name": "3. Get VIP Purchase Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/vip/purchases/{{vipPurchaseId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "vip",
+                "purchases",
+                "{{vipPurchaseId}}"
+              ]
+            },
+            "description": "Polled after checkout — re-checks the Cashfree order and activates VIP once paid. subscriptionId is set once active."
+          }
+        },
+        {
+          "name": "4. Dev-Resolve VIP Purchase — Success",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"outcome\": \"success\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/vip/purchases/{{vipPurchaseId}}/dev-resolve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "vip",
+                "purchases",
+                "{{vipPurchaseId}}",
+                "dev-resolve"
+              ]
+            },
+            "description": "Fakes the payment outcome without Cashfree — non-prod only. outcome can also be \"failed\"."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"VIP activated\", function () { pm.response.to.have.status(200); pm.expect(pm.response.json().status).to.eql(\"success\"); });",
+                  "pm.collectionVariables.set(\"vipSubscriptionId\", pm.response.json().subscriptionId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. List My Subscriptions",
           "request": {
             "method": "GET",
             "header": [
@@ -1286,7 +1372,7 @@
           }
         },
         {
-          "name": "4. Cancel Subscription",
+          "name": "6. Cancel Subscription",
           "request": {
             "method": "POST",
             "header": [
@@ -1347,7 +1433,7 @@
                 "calls"
               ]
             },
-            "description": "type is \"video\" or \"voice\" — the host needs the matching per-type rate set (Setup folder only sets the video rate). If VIP Subscription → Subscribe ran above and wasn't cancelled, the snapshotted rate reflects the VIP discount. mediaProvider (\"agora\" | \"p2p\") says which network carries this call's media — admin-switchable (Admin → Pricing & Economics Config → Call Media Provider), fixed per call once created. \"agora\": join with agoraToken (iceServers is null). \"p2p\": connect directly with browser WebRTC using iceServers (agoraToken is null), exchanging setup messages via POST .../calls/:id/signal — see REALTIME_EVENTS.md call:signal."
+            "description": "type is \"video\" or \"voice\" — the host needs the matching per-type rate set (Setup folder only sets the video rate). If VIP Subscription → Subscribe ran above and wasn't cancelled, the snapshotted rate reflects the VIP discount. mediaProvider (\"agora\" | \"p2p\") says which network carries this call's media — admin-switchable (Admin → Pricing & Economics Config → Call Media Provider), fixed per call once created. \"agora\": join with agoraToken (iceServers is null). \"p2p\": connect directly with browser WebRTC using iceServers (agoraToken is null), exchanging setup messages via POST .../calls/:id/signal — see REALTIME_EVENTS.md call:signal. Media: mediaProvider is \"agora\" (use agoraToken) or \"p2p\" (use iceServers). agoraFallbackAllowed: true means this p2p call may switch to Agora if the direct connection can't be made (2c. Fall Back to Agora)."
           },
           "event": [
             {
@@ -1435,6 +1521,43 @@
           ]
         },
         {
+          "name": "2c. Fall Back to Agora (auto calls)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/calls/{{callId}}/media-fallback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "calls",
+                "{{callId}}",
+                "media-fallback"
+              ]
+            },
+            "description": "For calls with agoraFallbackAllowed: true (admin call media mode \"auto\") whose direct p2p connection couldn't be established. Moves the ongoing call to Agora and returns { callId, channelName, mediaProvider: \"agora\", agoraToken, iceServers: null, agoraFallbackAllowed }; the other participant gets the call:media-fallback socket event with its own token. Safe to call from both sides. 409 if the call isn't ongoing or isn't an auto call — the expected outcome when running this collection on the default Agora setting."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 for an ongoing auto call, 409 otherwise\", function () { pm.expect([200,409]).to.include(pm.response.code); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "3. End Call",
           "request": {
             "method": "POST",
@@ -1459,6 +1582,52 @@
             },
             "description": "Ends a still-ringing call as \"missed\" if the host never accepted — fine for exercising the endpoint."
           }
+        },
+        {
+          "name": "3b. Report Call Media Quality",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/calls/{{callId}}/media-report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "calls",
+                "{{callId}}",
+                "media-report"
+              ]
+            },
+            "description": "Sent once by the app when a call ends — connection quality for the admin p2p-vs-Agora comparison. Only connected is required; relayed applies to p2p calls (true = went through the TURN relay). 204, no body; a repeat for the same call is ignored. 409 if the call never connected (e.g. it was missed) — the expected outcome when the host never accepted in this collection's run.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"connected\": true,\n  \"connectMs\": 1500,\n  \"relayed\": false,\n  \"avgRttMs\": 120,\n  \"packetLossPercent\": 0.4,\n  \"avgVideoKbps\": 950\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"204 for a connected call, 409 if it never connected\", function () { pm.expect([204,409]).to.include(pm.response.code); });"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "4. Submit Rating",
@@ -1832,8 +2001,97 @@
                 "{{liveBroadcastId}}",
                 "join"
               ]
-            }
+            },
+            "description": "Response: { broadcastId, channelName, secureMode, mediaProvider, agoraToken, iceServers, pauseHiddenVideo }. mediaProvider \"agora\" → join the Agora channel with agoraToken. \"cloudflare\" → agoraToken is null; open an RTCPeerConnection with iceServers and run Watch via Cloudflare 1 (subscribe) + 2 (answer). pauseHiddenVideo: stop receiving video while the app is hidden."
           }
+        },
+        {
+          "name": "Watch via Cloudflare 1: Subscribe",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/live/broadcasts/{{liveBroadcastId}}/sfu/subscribe",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "live",
+                "broadcasts",
+                "{{liveBroadcastId}}",
+                "sfu",
+                "subscribe"
+              ]
+            },
+            "description": "\"cloudflare\" broadcasts only, after Join Broadcast. Returns { sessionId, sdp } — sdp is the SFU's offer of the host's tracks; set it as the remote description, create an answer and send it with Watch via Cloudflare 2. 409 while the host hasn't published yet (retry, or wait for live:media-updated), or when the broadcast uses Agora — the expected outcome on the default setting."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 for a cloudflare broadcast, 409 otherwise\", function () { pm.expect([200,409]).to.include(pm.response.code); });",
+                  "if (pm.response.code === 200) { pm.collectionVariables.set(\"sfuSessionId\", pm.response.json().sessionId); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Watch via Cloudflare 2: Answer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/live/broadcasts/{{liveBroadcastId}}/sfu/answer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "live",
+                "broadcasts",
+                "{{liveBroadcastId}}",
+                "sfu",
+                "answer"
+              ]
+            },
+            "description": "Completes the viewer's SFU session with the app's SDP answer to the offer from step 1. 204, no body. 403 if sessionId isn't this viewer's current session; 409 when the broadcast uses Agora — the expected outcome on the default setting.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sfuSessionId}}\",\n  \"sdp\": \"v=0 (the app's SDP answer)\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"204 for a cloudflare broadcast, 403/409 otherwise\", function () { pm.expect([204,403,409]).to.include(pm.response.code); });"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Send Live Chat Message",

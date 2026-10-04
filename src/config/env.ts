@@ -88,12 +88,52 @@ const envSchema = z.object({
   // NAT/carrier firewalls that need a relay will fail to connect media.
   CLOUDFLARE_TURN_KEY_ID: z.string().optional(),
   CLOUDFLARE_TURN_API_TOKEN: z.string().optional(),
+  // Optional as a pair — Agora RESTful API credentials (Agora console →
+  // RESTful API → Customer ID/Secret; not the App ID/Certificate above).
+  // Only needed for the admin "ban the channel when it ends" switch
+  // (lib/agoraChannel.ts); without them that switch logs a warning and does nothing.
+  AGORA_CUSTOMER_ID: z.string().optional(),
+  AGORA_CUSTOMER_SECRET: z.string().optional(),
+  // Optional as a pair — Cloudflare Realtime SFU app (lib/cloudflareSfu.ts),
+  // used only by live broadcasts switched to the "cloudflare" provider. Missing
+  // means that provider fails loudly (503) when a broadcast tries to use it.
+  CLOUDFLARE_REALTIME_APP_ID: z.string().optional(),
+  CLOUDFLARE_REALTIME_APP_SECRET: z.string().optional(),
+  // Cashfree (lib/cashfree.ts). "sandbox" = test keys, fake money; see the
+  // production guard below. PG pair = wallet recharge + VIP checkout; if
+  // missing, those fall back to the dev-stub flow (dev-resolve endpoints)
+  // outside production and fail loudly in production.
+  CASHFREE_ENV: z.enum(["sandbox", "production"]).default("sandbox"),
+  CASHFREE_PG_APP_ID: z.string().optional(),
+  CASHFREE_PG_SECRET_KEY: z.string().optional(),
+  // Payouts (host withdrawals, lib/payout.ts) — a separate Cashfree product with
+  // its own keys. The public key signs every Payouts call (X-Cf-Signature)
+  // instead of IP whitelisting. Give it as a file path (local) or as the PEM
+  // text itself (hosts like Render where a file is awkward; "\n" escapes are
+  // fine). Missing = dev-stub payouts outside production.
+  CASHFREE_PAYOUT_CLIENT_ID: z.string().optional(),
+  CASHFREE_PAYOUT_CLIENT_SECRET: z.string().optional(),
+  CASHFREE_PAYOUT_PUBLIC_KEY_PATH: z.string().optional(),
+  CASHFREE_PAYOUT_PUBLIC_KEY: z.string().optional(),
+  // Where Cashfree sends the user back after checkout (the User app).
+  USER_APP_URL: z.string().url().optional(),
+  // This backend's public https URL — sent to Cashfree as each order's
+  // notify_url (webhook). Unset = no webhook; payments are then only
+  // confirmed when the app checks the order status (GET /wallet/recharge/:id).
+  BACKEND_PUBLIC_URL: z.string().url().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
   console.error("Invalid environment variables:", parsed.error.flatten().fieldErrors);
+  process.exit(1);
+}
+
+// A production server taking sandbox payments would credit real wallets for
+// fake test-card payments — real calls and gifts paid for with nothing.
+if (parsed.data.NODE_ENV === "production" && parsed.data.CASHFREE_ENV !== "production") {
+  console.error("NODE_ENV=production requires CASHFREE_ENV=production (sandbox payments would credit real wallets)");
   process.exit(1);
 }
 

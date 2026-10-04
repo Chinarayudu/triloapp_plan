@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { generateAgoraToken, RtcRole } from "../../lib/agoraToken";
 import { AppError } from "../../lib/errors";
+import { getIceServers } from "../../lib/iceServers";
 import { sendPushNotification } from "../../lib/push";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
@@ -19,6 +20,13 @@ import {
   liveRoomName,
   startBroadcast,
 } from "./live.service";
+import {
+  answerViewerSubscription,
+  getCurrentLiveMediaConfig,
+  LiveMediaProvider,
+  publishBroadcastTracks,
+  subscribeViewer,
+} from "./liveMedia.service";
 
 export const liveRouter = Router();
 
@@ -31,6 +39,22 @@ function parseBroadcastId(raw: unknown): string {
   const result = broadcastIdSchema.safeParse(raw);
   if (!result.success) throw new AppError(400, "Invalid broadcast id");
   return result.data;
+}
+
+// Exactly one of agoraToken / iceServers is set, by the broadcast's
+// snapshotted provider — the apps branch on mediaProvider. pauseHiddenVideo
+// tells viewer apps to stop receiving video while hidden (admin switch).
+async function liveMediaCredentials(
+  broadcast: { mediaProvider: LiveMediaProvider },
+  channelName: string,
+  uid: string,
+  role: (typeof RtcRole)[keyof typeof RtcRole],
+) {
+  const { pauseHiddenVideo } = await getCurrentLiveMediaConfig();
+  if (broadcast.mediaProvider === "cloudflare") {
+    return { mediaProvider: broadcast.mediaProvider, agoraToken: null, iceServers: await getIceServers(), pauseHiddenVideo };
+  }
+  return { mediaProvider: broadcast.mediaProvider, agoraToken: generateAgoraToken(channelName, uid, role), iceServers: null, pauseHiddenVideo };
 }
 
 // BR-NOTIF-01's "a followed/favorite host going live" — the only consumer
@@ -70,7 +94,7 @@ liveRouter.post(
         // Always on, same as 1:1 calls (calls.routes.ts) — 18+ content is
         // prohibited outright, but hosts' faces/voices are still sensitive.
         secureMode: true,
-        agoraToken: generateAgoraToken(channelName, req.user!.sub, RtcRole.PUBLISHER),
+        ...(await liveMediaCredentials(broadcast, channelName, req.user!.sub, RtcRole.PUBLISHER)),
       });
     } catch (err) {
       next(err);
@@ -108,7 +132,7 @@ liveRouter.post("/live/broadcasts/:id/join", requireAuth, requireRole("user"), a
       broadcastId,
       channelName,
       secureMode: true,
-      agoraToken: generateAgoraToken(channelName, req.user!.sub, RtcRole.SUBSCRIBER),
+      ...(await liveMediaCredentials(broadcast, channelName, req.user!.sub, RtcRole.SUBSCRIBER)),
     });
   } catch (err) {
     next(err);
@@ -125,6 +149,70 @@ liveRouter.post("/live/broadcasts/:id/leave", requireAuth, requireRole("user"), 
     next(err);
   }
 });
+
+// --- "cloudflare" broadcasts: WebRTC setup with the SFU, proxied so the SFU
+// app secret never leaves this server (lib/cloudflareSfu.ts). ---
+
+const sdpSchema = z.string().min(1).max(50_000);
+
+const publishSchema = z.object({
+  sdp: sdpSchema,
+  tracks: z
+    .array(z.object({ mid: z.string().min(1).max(100), trackName: z.string().min(1).max(200) }))
+    .min(1)
+    .max(4),
+});
+
+// Host: offer for their camera/mic tracks -> SFU's answer. Viewers already
+// watching re-pull via `live:media-updated` (a host republishing after a
+// reconnect gets a new SFU session).
+liveRouter.post(
+  "/live/broadcasts/:id/sfu/publish",
+  requireAuth,
+  requireRole("host"),
+  validateBody(publishSchema),
+  async (req, res, next) => {
+    try {
+      const broadcastId = parseBroadcastId(req.params.id);
+      const { sdp, tracks } = req.body as z.infer<typeof publishSchema>;
+      const { answer } = await publishBroadcastTracks(broadcastId, req.user!.sub, { type: "offer", sdp }, tracks);
+      emitToRoom(liveRoomName(broadcastId), "live:media-updated", { broadcastId });
+      res.json({ sdp: answer.sdp });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Viewer step 1 (after POST /join): the SFU's offer of the host's tracks.
+// 409 while the host's app is still publishing — retry shortly.
+liveRouter.post("/live/broadcasts/:id/sfu/subscribe", requireAuth, requireRole("user"), async (req, res, next) => {
+  try {
+    const { sessionId, offer } = await subscribeViewer(parseBroadcastId(req.params.id), req.user!.sub);
+    res.json({ sessionId, sdp: offer?.sdp ?? null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const answerSchema = z.object({ sessionId: z.string().min(1).max(200), sdp: sdpSchema });
+
+// Viewer step 2: the app's answer to that offer.
+liveRouter.post(
+  "/live/broadcasts/:id/sfu/answer",
+  requireAuth,
+  requireRole("user"),
+  validateBody(answerSchema),
+  async (req, res, next) => {
+    try {
+      const { sessionId, sdp } = req.body as z.infer<typeof answerSchema>;
+      await answerViewerSubscription(parseBroadcastId(req.params.id), req.user!.sub, sessionId, { type: "answer", sdp });
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 const liveChatSchema = z.object({ content: z.string().min(1).max(2000) });
 

@@ -4,6 +4,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  real,
   text,
   timestamp,
   unique,
@@ -455,7 +456,12 @@ export const rechargeTxns = pgTable("recharge_txns", {
     .references(() => rechargePackages.id),
   amountPaise: integer("amount_paise").notNull(), // snapshot — a later package price change can't alter an in-flight order
   gateway: text("gateway").notNull().default("dev-stub"),
+  // Cashfree's payment id once paid (dev-stub: a fake id from dev-resolve).
   gatewayTxnId: text("gateway_txn_id"),
+  // Cashfree order (lib/cashfree.ts) — null for dev-stub txns. The order id is
+  // ours ("rch_<id>"), so a webhook maps straight back to this row.
+  gatewayOrderId: text("gateway_order_id").unique(),
+  paymentSessionId: text("payment_session_id"),
   status: rechargeTxnStatusEnum("status").notNull().default("created"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -500,6 +506,30 @@ export const vipSubscriptions = pgTable("vip_subscriptions", {
   // ratings' aggregate.
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// A paid VIP purchase (Cashfree checkout, same lifecycle as rechargeTxns).
+// The subscription is only created/extended once the payment is confirmed —
+// subscriptionId stays null until then.
+export const vipPurchaseStatusEnum = pgEnum("vip_purchase_status", ["created", "success", "failed"]);
+
+export const vipPurchases = pgTable("vip_purchases", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  planId: uuid("plan_id")
+    .notNull()
+    .references(() => vipPlans.id),
+  amountPaise: integer("amount_paise").notNull(), // snapshot of the plan price at purchase time
+  gateway: text("gateway").notNull().default("dev-stub"),
+  gatewayTxnId: text("gateway_txn_id"),
+  gatewayOrderId: text("gateway_order_id").unique(), // "vip_<id>"
+  paymentSessionId: text("payment_session_id"),
+  status: vipPurchaseStatusEnum("status").notNull().default("created"),
+  subscriptionId: uuid("subscription_id").references(() => vipSubscriptions.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // Versioned like commissionConfigs — the call-discount rate is a guess (no
@@ -568,13 +598,26 @@ export const callTypeEnum = pgEnum("call_type", ["video", "voice"]);
 // both; only how the two apps exchange media differs.
 export const callMediaProviderEnum = pgEnum("call_media_provider", ["agora", "p2p"]);
 
+// What the admin switch can be set to. "auto" = try p2p first and fall back
+// to Agora mid-call if the two devices can't connect directly (POST
+// /calls/:id/media-fallback) — a call itself only ever records the provider
+// actually carrying it (callMediaProviderEnum above), never "auto".
+export const callMediaModeEnum = pgEnum("call_media_mode", ["agora", "p2p", "auto"]);
+
 // Admin-switchable (POST /admin/config/call-media), versioned the same way as
 // commissionConfigs — latest row whose effectiveFrom isn't in the future wins.
 // Each call snapshots the active provider onto itself at creation, so a switch
 // never changes the provider of a call that's already ringing or ongoing.
 export const callMediaConfigs = pgTable("call_media_configs", {
   id: uuid("id").primaryKey().defaultRandom(),
-  provider: callMediaProviderEnum("provider").notNull(),
+  provider: callMediaModeEnum("provider").notNull(),
+  // "auto" only: share of new calls (0-100) that try p2p first; the rest go
+  // straight to Agora. Lets p2p roll out gradually.
+  autoP2pPercent: integer("auto_p2p_percent").notNull().default(100),
+  // Ban the Agora channel when a call ends, so nobody can stay in (or rejoin)
+  // it on a still-valid token — Agora keeps billing us for those minutes,
+  // but the user is no longer being charged for them.
+  agoraKickOnEnd: boolean("agora_kick_on_end").notNull().default(false),
   effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -590,6 +633,10 @@ export const calls = pgTable("calls", {
   status: callStatusEnum("status").notNull().default("ringing"),
   type: callTypeEnum("type").notNull().default("video"),
   mediaProvider: callMediaProviderEnum("media_provider").notNull().default("agora"),
+  // Set for calls placed under "auto": a p2p call that can't connect may be
+  // switched to Agora once (mediaProvider flips to "agora", mediaFallbackAt is stamped).
+  agoraFallbackAllowed: boolean("agora_fallback_allowed").notNull().default(false),
+  mediaFallbackAt: timestamp("media_fallback_at", { withTimezone: true }),
   // Snapshotted at call creation so later admin config changes can't alter
   // an in-flight or already-settled call (BR-COM-02).
   ratePerMinutePaiseSnapshot: integer("rate_per_minute_paise_snapshot").notNull(),
@@ -615,6 +662,34 @@ export const callBillingTicks = pgTable("call_billing_ticks", {
   beansCredited: integer("beans_credited").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Connection quality each app reports when a call ends (POST
+// /calls/:id/media-report) — what lets admins compare p2p against Agora on
+// real devices (GET /admin/calls/media-quality) before moving more calls to
+// p2p. One report per (call, participant). Client-reported, so it's only ever
+// used for these aggregate stats, never for billing.
+export const callMediaReports = pgTable(
+  "call_media_reports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    callId: uuid("call_id")
+      .notNull()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    reporterId: uuid("reporter_id")
+      .notNull()
+      .references(() => users.id),
+    // The provider carrying the call when it ended (after any fallback).
+    mediaProvider: callMediaProviderEnum("media_provider").notNull(),
+    connected: boolean("connected").notNull(),
+    connectMs: integer("connect_ms"),
+    relayed: boolean("relayed"),
+    avgRttMs: integer("avg_rtt_ms"),
+    packetLossPercent: real("packet_loss_percent"),
+    avgVideoKbps: integer("avg_video_kbps"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique().on(table.callId, table.reporterId)],
+);
 
 // A 1-5 star rating either call participant leaves for the other after the
 // call ends (Host app's call-ended screen; BR-DIS-02 needs the resulting
@@ -740,6 +815,27 @@ export const giftTransactions = pgTable("gift_transactions", {
 
 export const liveBroadcastStatusEnum = pgEnum("live_broadcast_status", ["live", "ended"]);
 
+// Who carries a live broadcast's audio/video. "agora" = Agora channel, billed
+// per participant-minute (host and every viewer). "cloudflare" = Cloudflare
+// Realtime SFU: the host pushes one WebRTC stream, each viewer pulls it, all
+// set up through our backend (lib/cloudflareSfu.ts) — billed per GB sent.
+export const liveMediaProviderEnum = pgEnum("live_media_provider", ["agora", "cloudflare"]);
+
+// Admin-switchable (POST /admin/config/live-media), versioned like
+// callMediaConfigs. Each broadcast snapshots the provider when it starts.
+export const liveMediaConfigs = pgTable("live_media_configs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  provider: liveMediaProviderEnum("provider").notNull(),
+  // Same as callMediaConfigs.agoraKickOnEnd, for a broadcast's channel.
+  agoraKickOnEnd: boolean("agora_kick_on_end").notNull().default(false),
+  // Tells viewer apps to stop receiving video while the app is hidden
+  // (resumed when visible again) — Agora bills a viewer receiving no video at
+  // the audio rate, and Cloudflare sends no video bytes.
+  pauseHiddenVideo: boolean("pause_hidden_video").notNull().default(false),
+  effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const liveBroadcasts = pgTable("live_broadcasts", {
   id: uuid("id").primaryKey().defaultRandom(),
   hostId: uuid("host_id")
@@ -747,6 +843,12 @@ export const liveBroadcasts = pgTable("live_broadcasts", {
     .references(() => users.id),
   status: liveBroadcastStatusEnum("status").notNull().default("live"),
   peakViewerCount: integer("peak_viewer_count").notNull().default(0),
+  mediaProvider: liveMediaProviderEnum("media_provider").notNull().default("agora"),
+  // "cloudflare" only: the host's SFU session and the track names it
+  // published — what each viewer's session pulls. Replaced if the host
+  // republishes (e.g. after a reconnect).
+  sfuSessionId: text("sfu_session_id"),
+  sfuTrackNames: jsonb("sfu_track_names").$type<string[]>(),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   endedAt: timestamp("ended_at", { withTimezone: true }),
 });
@@ -764,6 +866,9 @@ export const liveViewers = pgTable("live_viewers", {
   // "concurrent viewer count" are computed (BR-LIVE-04), not a separate
   // counter that could drift from reality.
   leftAt: timestamp("left_at", { withTimezone: true }),
+  // "cloudflare" broadcasts only: this viewer's SFU session, so only they can
+  // complete its setup (POST /live/broadcasts/:id/sfu/answer).
+  sfuSessionId: text("sfu_session_id"),
 });
 
 // ---------------------------------------------------------------------------

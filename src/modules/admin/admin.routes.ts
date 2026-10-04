@@ -41,7 +41,9 @@ import {
   updateSubAdminPermissions,
 } from "./admin.service";
 import { requireAdminPermission } from "./permissions";
-import { getCurrentCallMediaProvider, listCallMediaConfigs, setCallMediaProvider } from "../calls/callMedia.service";
+import { getCurrentCallMediaConfig, listCallMediaConfigs, setCallMediaConfig } from "../calls/callMedia.service";
+import { getCallMediaQuality } from "../calls/callMediaReports.service";
+import { getCurrentLiveMediaConfig, listLiveMediaConfigs, setLiveMediaConfig } from "../live/liveMedia.service";
 
 export const adminRouter = Router();
 
@@ -219,18 +221,33 @@ adminRouter.post(
   },
 );
 
-// Which network carries 1:1 call audio/video — "agora" (per-minute billed) or
-// "p2p" (direct WebRTC + TURN relay, near-zero media cost). A cost lever, so
-// finance permission. The first entry is the current one.
+// Which network carries 1:1 call audio/video — "agora" (per-minute billed),
+// "p2p" (direct WebRTC + TURN relay, near-zero media cost), or "auto" (p2p
+// for autoP2pPercent% of new calls, falling back to Agora mid-call if p2p
+// can't connect). agoraKickOnEnd bans a call's Agora channel when it ends.
+// A cost lever, so finance permission. `current` is the active mode; the
+// first entry of `configs` is the active row.
 adminRouter.get("/admin/config/call-media", requireAdminPermission("finance"), async (_req, res, next) => {
   try {
-    res.json({ current: await getCurrentCallMediaProvider(), configs: await listCallMediaConfigs() });
+    const config = await getCurrentCallMediaConfig();
+    res.json({
+      current: config.mode,
+      autoP2pPercent: config.autoP2pPercent,
+      agoraKickOnEnd: config.agoraKickOnEnd,
+      configs: await listCallMediaConfigs(),
+    });
   } catch (err) {
     next(err);
   }
 });
 
-const callMediaConfigSchema = z.object({ provider: z.enum(["agora", "p2p"]) });
+// Fields left out keep their current value, so an older admin app sending
+// just { provider } doesn't silently switch the other settings off.
+const callMediaConfigSchema = z.object({
+  provider: z.enum(["agora", "p2p", "auto"]),
+  autoP2pPercent: z.number().int().min(0).max(100).optional(),
+  agoraKickOnEnd: z.boolean().optional(),
+});
 
 adminRouter.post(
   "/admin/config/call-media",
@@ -238,13 +255,74 @@ adminRouter.post(
   validateBody(callMediaConfigSchema),
   async (req, res, next) => {
     try {
-      const { provider } = req.body as z.infer<typeof callMediaConfigSchema>;
-      res.status(201).json(await setCallMediaProvider(req.user!.sub, provider));
+      const body = req.body as z.infer<typeof callMediaConfigSchema>;
+      const current = await getCurrentCallMediaConfig();
+      res.status(201).json(
+        await setCallMediaConfig(req.user!.sub, {
+          mode: body.provider,
+          autoP2pPercent: body.autoP2pPercent ?? current.autoP2pPercent,
+          agoraKickOnEnd: body.agoraKickOnEnd ?? current.agoraKickOnEnd,
+        }),
+      );
     } catch (err) {
       next(err);
     }
   },
 );
+
+// Same switch for live broadcasts: "agora" or "cloudflare" (Cloudflare
+// Realtime SFU, billed per GB). Snapshotted per broadcast at start.
+adminRouter.get("/admin/config/live-media", requireAdminPermission("finance"), async (_req, res, next) => {
+  try {
+    res.json({ ...(await getCurrentLiveMediaConfig()), configs: await listLiveMediaConfigs() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const liveMediaConfigSchema = z.object({
+  provider: z.enum(["agora", "cloudflare"]),
+  agoraKickOnEnd: z.boolean().optional(),
+  pauseHiddenVideo: z.boolean().optional(),
+});
+
+adminRouter.post(
+  "/admin/config/live-media",
+  requireAdminPermission("finance"),
+  validateBody(liveMediaConfigSchema),
+  async (req, res, next) => {
+    try {
+      const body = req.body as z.infer<typeof liveMediaConfigSchema>;
+      const current = await getCurrentLiveMediaConfig();
+      res.status(201).json(
+        await setLiveMediaConfig(req.user!.sub, {
+          provider: body.provider,
+          agoraKickOnEnd: body.agoraKickOnEnd ?? current.agoraKickOnEnd,
+          pauseHiddenVideo: body.pauseHiddenVideo ?? current.pauseHiddenVideo,
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+const mediaQualityQuerySchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(7) });
+
+// p2p vs Agora connection quality from the apps' end-of-call reports, plus how
+// often "auto" calls had to fall back to Agora — check before raising autoP2pPercent.
+adminRouter.get("/admin/calls/media-quality", requireAdminPermission("finance"), async (req, res, next) => {
+  const parsed = mediaQualityQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    next(new AppError(400, parsed.error.issues.map((i) => i.message).join(", ")));
+    return;
+  }
+  try {
+    res.json(await getCallMediaQuality(parsed.data.days));
+  } catch (err) {
+    next(err);
+  }
+});
 
 adminRouter.get("/admin/config/withdrawal-policy", requireAdminPermission("finance"), async (_req, res, next) => {
   try {

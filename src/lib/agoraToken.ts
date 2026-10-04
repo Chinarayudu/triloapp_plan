@@ -6,7 +6,7 @@ const agoraConfigured = Boolean(env.AGORA_APP_ID && env.AGORA_APP_CERTIFICATE);
 
 // Generous headroom for a call's actual duration — we don't know it in
 // advance, and a token expiring mid-call would drop the connection.
-const TOKEN_EXPIRY_SECONDS = 4 * 60 * 60;
+export const TOKEN_EXPIRY_SECONDS = 4 * 60 * 60;
 
 // Token generation is a local HMAC computation (like S3 presigning), not a
 // network call — safe to run in every environment. Falls back to a

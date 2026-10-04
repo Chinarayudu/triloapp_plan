@@ -3,7 +3,8 @@ import { db } from "../../db/client";
 import { calls } from "../../db/schema";
 import { logger } from "../../lib/logger";
 import { broadcastBusy, emitToUser } from "../../realtime/socket";
-import { checkCollusionSafely, RINGING_TIMEOUT_MS, TICK_INTERVAL_MS } from "./calls.service";
+import { closeCallChannelIfEnabled } from "./callMedia.service";
+import { channelNameFor, checkCollusionSafely, RINGING_TIMEOUT_MS, TICK_INTERVAL_MS } from "./calls.service";
 import { clearRingingTimeout, stopBillingInterval } from "./callTimers";
 
 // BACKEND_PLAN.md §8 "Mid-call failure": billing-interval/ringing-timeout
@@ -53,6 +54,7 @@ export async function reapStaleCalls(): Promise<{ reapedRinging: number; reapedO
       .where(eq(calls.id, call.id))
       .returning();
     broadcastBusy(call.hostId, false);
+    void closeCallChannelIfEnabled(channelNameFor(call.id), updated.mediaProvider);
     await checkCollusionSafely(call.hostId, call.userId);
 
     const summary = {

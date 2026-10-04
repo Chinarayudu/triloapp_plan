@@ -1,8 +1,9 @@
-import { and, count, desc, eq, gte, lte } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import { db } from "../../db/client";
 import { moderationReports, users, withdrawalPolicyConfigs, withdrawalRequests, withdrawalSlabs } from "../../db/schema";
 import { AppError } from "../../lib/errors";
-import { initiatePayout } from "../../lib/payout";
+import { logger } from "../../lib/logger";
+import { getPayoutOutcome, initiatePayout, isCashfreePayoutConfigured, isDevStubPayout, payoutTransferId } from "../../lib/payout";
 import { sendPushNotification } from "../../lib/push";
 import { emitToUser, isUserConnected } from "../../realtime/socket";
 import { getPrimaryPayoutMethod } from "../hosts/payoutMethods.service";
@@ -83,8 +84,9 @@ export async function getWithdrawalById(id: string): Promise<WithdrawalRequest |
 // time, recomputed here for the admin's benefit since a host's KYC/reports
 // could plausibly have changed in the time a request sat in the queue.
 export async function getWithdrawalDetailForAdmin(id: string) {
-  const request = await getWithdrawalById(id);
-  if (!request) throw new AppError(404, "Withdrawal request not found");
+  const found = await getWithdrawalById(id);
+  if (!found) throw new AppError(404, "Withdrawal request not found");
+  const request = found.status === "processing" ? await syncPayoutWithGateway(found) : found;
 
   const [host] = await db.select().from(users).where(eq(users.id, request.hostId)).limit(1);
   const primaryPayoutMethod = await getPrimaryPayoutMethod(request.hostId);
@@ -178,17 +180,35 @@ export async function requestWithdrawal(hostId: string, beans: number): Promise<
   return initiatePayoutForRequest(created);
 }
 
-// Shared by the auto-approve path above and the dev-admin-decision
-// "approve" path below — both converge on the same gateway call once a
-// request reaches `approved`, so the transition to `processing` can't
-// drift between the two.
+// Shared by the auto-approve path above and the admin "approve" decision
+// below — both converge on the same gateway call once a request reaches
+// `approved`, so the transition to `processing` can't drift between the two.
+//
+// If Cashfree rejects or errors on the transfer, we must not guess: a timeout
+// can still mean Cashfree accepted it. So we ask Cashfree whether the transfer
+// exists before deciding — exists = it's processing; definitely not there =
+// fail the request and give the host their beans back.
 async function initiatePayoutForRequest(request: WithdrawalRequest): Promise<WithdrawalRequest> {
-  const { payoutTxnId } = await initiatePayout({
-    withdrawalRequestId: request.id,
-    hostId: request.hostId,
-    amountPaise: request.netPayoutPaise,
-    payoutDetails: request.payoutDetailsSnapshot,
-  });
+  const [host] = await db.select({ name: users.name }).from(users).where(eq(users.id, request.hostId)).limit(1);
+
+  let payoutTxnId: string;
+  try {
+    ({ payoutTxnId } = await initiatePayout({
+      withdrawalRequestId: request.id,
+      amountPaise: request.netPayoutPaise,
+      payoutDetails: request.payoutDetailsSnapshot,
+      hostName: host?.name ?? "Host",
+    }));
+  } catch (err) {
+    if (!isCashfreePayoutConfigured()) throw err;
+    logger.error({ err, withdrawalRequestId: request.id }, "Cashfree payout initiation failed — checking whether the transfer exists");
+    const transferId = payoutTransferId(request.id);
+    const { outcome } = await getPayoutOutcome(transferId);
+    if (outcome === "not_found") {
+      return markPayoutFailed(request.id, ["approved"], "Payout could not be started — your beans have been returned");
+    }
+    payoutTxnId = transferId;
+  }
 
   const [updated] = await db
     .update(withdrawalRequests)
@@ -197,6 +217,70 @@ async function initiatePayoutForRequest(request: WithdrawalRequest): Promise<Wit
     .returning();
   await notifyWithdrawalStatus(updated);
   return updated;
+}
+
+// The only two ways a payout ends. Each claims the row from an allowed status
+// inside the transaction (WHERE status IN ...), so a webhook racing a status
+// check settles it once; the bean reversal's ledger idempotency key makes a
+// second reversal impossible regardless.
+async function markPayoutPaid(id: string): Promise<WithdrawalRequest | undefined> {
+  const [updated] = await db
+    .update(withdrawalRequests)
+    .set({ status: "paid", updatedAt: new Date() })
+    .where(and(eq(withdrawalRequests.id, id), eq(withdrawalRequests.status, "processing")))
+    .returning();
+  if (updated) await notifyWithdrawalStatus(updated);
+  return updated;
+}
+
+// `fromStatuses` includes "paid" only for a Cashfree REVERSED transfer (the
+// bank returned money after crediting) — the host gets their beans back.
+async function markPayoutFailed(
+  id: string,
+  fromStatuses: Array<WithdrawalRequest["status"]>,
+  reason: string,
+): Promise<WithdrawalRequest> {
+  const failed = await db.transaction(async (tx) => {
+    const [claimed] = await tx
+      .update(withdrawalRequests)
+      .set({ status: "failed", failureReason: reason, updatedAt: new Date() })
+      .where(and(eq(withdrawalRequests.id, id), inArray(withdrawalRequests.status, fromStatuses)))
+      .returning();
+    if (!claimed) return undefined;
+    await creditHostBeans(tx, claimed.hostId, claimed.beans, "withdrawal", claimed.id, `withdrawal:${claimed.id}:failure-reversal`);
+    return claimed;
+  });
+  if (!failed) return (await getWithdrawalById(id))!;
+  await notifyWithdrawalStatus(failed);
+  return failed;
+}
+
+export async function getWithdrawalByPayoutTxnId(payoutTxnId: string): Promise<WithdrawalRequest | undefined> {
+  const [row] = await db.select().from(withdrawalRequests).where(eq(withdrawalRequests.payoutTxnId, payoutTxnId)).limit(1);
+  return row;
+}
+
+// Asks Cashfree what happened to this request's transfer and settles it.
+// Called by the Payouts webhook (for any status) and by the host/admin status
+// routes (for `processing` ones), so a lost webhook never leaves a host's
+// payout stuck. Dev-stub payouts are left to dev-resolve-payout.
+export async function syncPayoutWithGateway(request: WithdrawalRequest): Promise<WithdrawalRequest> {
+  if (request.status !== "processing" && request.status !== "paid") return request;
+  if (isDevStubPayout(request.payoutTxnId) || !isCashfreePayoutConfigured()) return request;
+
+  const { outcome, description } = await getPayoutOutcome(request.payoutTxnId!);
+  if (outcome === "paid" && request.status === "processing") {
+    return (await markPayoutPaid(request.id)) ?? (await getWithdrawalById(request.id))!;
+  }
+  if (outcome === "failed") {
+    return markPayoutFailed(request.id, ["processing", "paid"], description ?? "Payout failed");
+  }
+  if (outcome === "not_found") {
+    // We recorded a transfer id Cashfree has no record of — never reverse
+    // beans on a guess here; leave it for a human.
+    logger.error({ withdrawalRequestId: request.id, payoutTxnId: request.payoutTxnId }, "Processing payout not found at Cashfree");
+  }
+  return request;
 }
 
 // The admin withdrawal-approval queue decision (BR-EARN-05, BR-ADM-05) —
@@ -231,9 +315,8 @@ export async function decideWithdrawal(id: string, decision: "approve" | "reject
   return initiatePayoutForRequest(approved);
 }
 
-// Stands in for the payout gateway's webhook (BACKEND_PLAN.md §2) — same
-// dev-only reasoning as devAdminDecision, since there is no real gateway
-// configured yet to call a real webhook back.
+// Fakes the Payouts outcome for a dev-stub payout (no Cashfree Payouts keys) —
+// a real Cashfree transfer is only ever settled by what Cashfree reports.
 export async function devResolvePayout(
   id: string,
   outcome: "paid" | "failed",
@@ -242,26 +325,10 @@ export async function devResolvePayout(
   const request = await getWithdrawalById(id);
   if (!request) throw new AppError(404, "Withdrawal request not found");
   if (request.status !== "processing") throw new AppError(409, `Request is ${request.status}, not processing`);
-
-  if (outcome === "failed") {
-    const failed = await db.transaction(async (tx) => {
-      await creditHostBeans(tx, request.hostId, request.beans, "withdrawal", request.id, `withdrawal:${request.id}:failure-reversal`);
-      const [updated] = await tx
-        .update(withdrawalRequests)
-        .set({ status: "failed", failureReason: reason ?? "Payout failed", updatedAt: new Date() })
-        .where(eq(withdrawalRequests.id, id))
-        .returning();
-      return updated;
-    });
-    await notifyWithdrawalStatus(failed);
-    return failed;
+  if (!isDevStubPayout(request.payoutTxnId)) {
+    throw new AppError(409, "This is a real Cashfree payout — its outcome comes from Cashfree, not dev-resolve");
   }
 
-  const [updated] = await db
-    .update(withdrawalRequests)
-    .set({ status: "paid", updatedAt: new Date() })
-    .where(eq(withdrawalRequests.id, id))
-    .returning();
-  await notifyWithdrawalStatus(updated);
-  return updated;
+  if (outcome === "failed") return markPayoutFailed(id, ["processing"], reason ?? "Payout failed");
+  return (await markPayoutPaid(id)) ?? (await getWithdrawalById(id))!;
 }

@@ -4,7 +4,13 @@ import { env } from "../../config/env";
 import { AppError } from "../../lib/errors";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
-import { devResolvePayout, getWithdrawalById, listWithdrawalsForHost, requestWithdrawal } from "./withdrawal.service";
+import {
+  devResolvePayout,
+  getWithdrawalById,
+  listWithdrawalsForHost,
+  requestWithdrawal,
+  syncPayoutWithGateway,
+} from "./withdrawal.service";
 
 export const withdrawalsRouter = Router();
 
@@ -38,7 +44,12 @@ withdrawalsRouter.post(
 
 withdrawalsRouter.get("/withdrawals", requireAuth, requireRole("host"), async (req, res, next) => {
   try {
-    const requests = await listWithdrawalsForHost(req.user!.sub);
+    // Confirm any in-flight payouts with Cashfree so the Withdraw/History
+    // screens never show a stale "processing" after a lost webhook.
+    const requests = [];
+    for (const request of await listWithdrawalsForHost(req.user!.sub)) {
+      requests.push(request.status === "processing" ? await syncPayoutWithGateway(request) : request);
+    }
     res.json({ requests });
   } catch (err) {
     next(err);
@@ -50,7 +61,7 @@ withdrawalsRouter.get("/withdrawals/:id", requireAuth, requireRole("host"), asyn
     const request = await getWithdrawalById(parseWithdrawalId(req.params.id));
     if (!request) throw new AppError(404, "Withdrawal request not found");
     if (request.hostId !== req.user!.sub) throw new AppError(403, "Not your withdrawal request");
-    res.json(request);
+    res.json(request.status === "processing" ? await syncPayoutWithGateway(request) : request);
   } catch (err) {
     next(err);
   }
@@ -58,8 +69,8 @@ withdrawalsRouter.get("/withdrawals/:id", requireAuth, requireRole("host"), asyn
 
 const resolvePayoutSchema = z.object({ outcome: z.enum(["paid", "failed"]), reason: z.string().max(500).optional() });
 
-// Stands in for the payout gateway's webhook (BACKEND_PLAN.md §2) — no
-// real gateway is configured to call one yet (src/lib/payout.ts).
+// Fakes the outcome of a dev-stub payout (no Cashfree Payouts keys) — refuses
+// real Cashfree payouts, whose outcome only comes from Cashfree.
 withdrawalsRouter.post(
   "/withdrawals/:id/dev-resolve-payout",
   requireAuth,

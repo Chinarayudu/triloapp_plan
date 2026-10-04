@@ -1,3 +1,4 @@
+import { vi } from "vitest";
 import { Express } from "express";
 import request from "supertest";
 import { db } from "../db/client";
@@ -51,4 +52,19 @@ export async function registerAndLoginAdmin(
   const [user] = await db.insert(users).values({ phone, role, permissions }).returning();
   const tokens = await issueTokenPair(user.id, role);
   return { ...tokens, user };
+}
+
+export type FetchCall = { url: string; method: string; headers: Record<string, string>; body: unknown };
+
+// Stands in for the Agora / Cloudflare HTTP APIs: records each request and
+// answers with whatever `respond` returns for it, so nothing leaves the
+// machine. Undo with vi.unstubAllGlobals().
+export function stubFetch(respond: (url: string, body: unknown) => unknown): FetchCall[] {
+  const seen: FetchCall[] = [];
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit = {}) => {
+    const body = init.body ? JSON.parse(init.body as string) : undefined;
+    seen.push({ url, method: init.method ?? "GET", headers: init.headers as Record<string, string>, body });
+    return new Response(JSON.stringify(respond(url, body) ?? {}), { status: 200 });
+  });
+  return seen;
 }

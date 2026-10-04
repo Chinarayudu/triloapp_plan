@@ -19,7 +19,13 @@ import {
   transferUserToHost,
 } from "../wallet/wallet.service";
 import { isOnline } from "../hosts/presence.store";
-import { CallMediaCredentials, getCallMediaCredentials, getCurrentCallMediaProvider } from "./callMedia.service";
+import {
+  CallMediaCredentials,
+  chooseCallMedia,
+  closeCallChannelIfEnabled,
+  getCallMediaCredentials,
+  getCurrentCallMediaConfig,
+} from "./callMedia.service";
 import {
   clearRingingTimeout,
   clearTickInProgress,
@@ -175,7 +181,7 @@ async function getActiveCallForHost(hostId: string): Promise<CallRow | undefined
   return rows.find((c) => ACTIVE_STATUSES.includes(c.status));
 }
 
-function channelNameFor(callId: string): string {
+export function channelNameFor(callId: string): string {
   return `call-${callId}`;
 }
 
@@ -240,7 +246,7 @@ export async function initiateCall(
 
   const commissionBasisPointsSnapshot = await getCurrentCommissionBasisPoints(hostId); // BR-COM-03: host override wins if active
   const paisePerBeanSnapshot = await getCurrentPaisePerBean();
-  const mediaProvider = await getCurrentCallMediaProvider();
+  const { mediaProvider, agoraFallbackAllowed } = chooseCallMedia(await getCurrentCallMediaConfig(), Math.random() * 100);
   const caller = await getUserById(userId);
 
   const [call] = await db
@@ -254,6 +260,7 @@ export async function initiateCall(
       commissionBasisPointsSnapshot,
       paisePerBeanSnapshot,
       mediaProvider,
+      agoraFallbackAllowed,
     })
     .returning();
 
@@ -276,7 +283,7 @@ export async function initiateCall(
   }
 
   const channelName = channelNameFor(call.id);
-  const media = await getCallMediaCredentials(call.mediaProvider, channelName, userId);
+  const media = await getCallMediaCredentials(call, channelName, userId);
   return { call, channelName, hostName: host.name ?? "Unknown", ...media };
 }
 
@@ -304,8 +311,44 @@ export async function acceptCall(
   broadcastBusy(hostId, true);
 
   const caller = await getUserById(call.userId);
-  const media = await getCallMediaCredentials(updated.mediaProvider, channelName, hostId);
+  const media = await getCallMediaCredentials(updated, channelName, hostId);
   return { call: updated, channelName, callerName: caller?.name ?? "Unknown", ...media };
+}
+
+// "auto" calls only: either app calls this when its direct (p2p) connection
+// to the other device can't be established, and the call moves to Agora for
+// the rest of its duration. Billing is untouched — it never depended on the
+// media provider. Idempotent: both apps usually give up at about the same
+// moment, so the second request just gets an Agora token for the
+// already-switched call.
+export async function fallBackToAgora(
+  callId: string,
+  requesterId: string,
+): Promise<{ channelName: string } & CallMediaCredentials> {
+  const call = await getCallById(callId);
+  if (!call) throw new AppError(404, "Call not found");
+  if (call.userId !== requesterId && call.hostId !== requesterId) throw new AppError(403, "Not your call");
+  if (call.status !== "ongoing") throw new AppError(409, `Call is ${call.status}, cannot switch media`);
+  if (!call.agoraFallbackAllowed) throw new AppError(409, "This call can't switch to Agora");
+
+  const channelName = channelNameFor(callId);
+  if (call.mediaProvider === "p2p") {
+    // Guarded on the provider so only one of two simultaneous requests does the switch.
+    const [switched] = await db
+      .update(calls)
+      .set({ mediaProvider: "agora", mediaFallbackAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(calls.id, callId), eq(calls.mediaProvider, "p2p")))
+      .returning();
+    if (switched) {
+      const otherId = requesterId === call.userId ? call.hostId : call.userId;
+      const otherMedia = await getCallMediaCredentials(switched, channelName, otherId);
+      emitToUser(otherId, "call:media-fallback", { callId, channelName, ...otherMedia });
+      logger.info({ callId, requesterId }, "p2p call fell back to Agora");
+    }
+  }
+
+  const media = await getCallMediaCredentials({ mediaProvider: "agora", agoraFallbackAllowed: true }, channelName, requesterId);
+  return { channelName, ...media };
 }
 
 // "p2p" calls only: the two apps exchange WebRTC connection setup (hello /
@@ -368,6 +411,7 @@ export async function endCall(callId: string, requesterId: string): Promise<Call
       .where(eq(calls.id, callId))
       .returning();
     broadcastBusy(call.hostId, false);
+    void closeCallChannelIfEnabled(channelNameFor(callId), updated.mediaProvider);
     await checkCollusionSafely(call.hostId, call.userId);
   }
 
@@ -407,6 +451,7 @@ async function endCallForInsufficientBalance(call: CallRow): Promise<void> {
     .where(eq(calls.id, call.id))
     .returning();
   broadcastBusy(call.hostId, false);
+  void closeCallChannelIfEnabled(channelNameFor(call.id), updated.mediaProvider);
   await checkCollusionSafely(call.hostId, call.userId);
 
   const summary = {
@@ -443,6 +488,7 @@ export async function endCallForLostConnection(accountId: string): Promise<CallR
   if (!updated) return null;
 
   broadcastBusy(call.hostId, false);
+  void closeCallChannelIfEnabled(channelNameFor(call.id), updated.mediaProvider);
   await checkCollusionSafely(call.hostId, call.userId);
 
   const summary = {

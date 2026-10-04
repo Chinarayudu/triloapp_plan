@@ -1593,7 +1593,7 @@
                 "call-media"
               ]
             },
-            "description": "Which network carries 1:1 call audio/video: \"agora\" (per-minute billed) or \"p2p\" (direct WebRTC + TURN relay, near-zero media cost). current = the active provider; configs = full history, newest first. No row ever set = \"agora\"."
+            "description": "Which network carries 1:1 call audio/video. current: \"agora\" (per-minute billed), \"p2p\" (direct WebRTC + TURN relay, near-zero media cost) or \"auto\" (p2p for autoP2pPercent% of new calls, falling back to Agora mid-call if the direct connection fails). agoraKickOnEnd: ban the call's Agora channel when it ends. configs = full history, newest first. Nothing ever set = \"agora\" with everything else off."
           },
           "event": [
             {
@@ -1602,7 +1602,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
-                  "pm.test(\"current is agora or p2p\", function () { pm.expect([\"agora\", \"p2p\"]).to.include(pm.response.json().current); });"
+                  "pm.test(\"current is agora, p2p or auto\", function () { pm.expect([\"agora\", \"p2p\", \"auto\"]).to.include(pm.response.json().current); });",
+                  "pm.test(\"has autoP2pPercent and agoraKickOnEnd\", function () { var j = pm.response.json(); pm.expect(j.autoP2pPercent).to.be.a(\"number\"); pm.expect(j.agoraKickOnEnd).to.be.a(\"boolean\"); });"
                 ]
               }
             }
@@ -1626,7 +1627,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"provider\": \"agora\"\n}"
+              "raw": "{\n  \"provider\": \"agora\",\n  \"autoP2pPercent\": 100,\n  \"agoraKickOnEnd\": false\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/admin/config/call-media",
@@ -1639,7 +1640,7 @@
                 "call-media"
               ]
             },
-            "description": "Switch 1:1 calls between \"agora\" and \"p2p\" — takes effect for the next call placed; ringing/ongoing calls keep the provider they started with. Finance permission; audit-logged with the previous value. Body defaults to \"agora\" here so running this collection never switches an environment over to p2p by accident — change it to \"p2p\" deliberately."
+            "description": "Switch 1:1 calls between \"agora\", \"p2p\" and \"auto\". autoP2pPercent (0-100, \"auto\" only) = share of new calls that try p2p first; agoraKickOnEnd = ban each Agora call channel when the call ends (needs AGORA_CUSTOMER_ID/SECRET on the server). Both optional — left out, they keep their current value. Takes effect for the next call placed; ringing/ongoing calls keep their provider. Finance permission; audit-logged with the previous value. Body is the plain-Agora default here so running this collection never switches an environment over by accident — change it deliberately."
           },
           "event": [
             {
@@ -1648,6 +1649,131 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "15. Get Live Media Provider",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/config/live-media",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "config",
+                "live-media"
+              ]
+            },
+            "description": "Which network carries live broadcasts: \"agora\" or \"cloudflare\" (Cloudflare Realtime SFU, billed per GB instead of per viewer-minute). agoraKickOnEnd: ban the broadcast's Agora channel when it ends. pauseHiddenVideo: viewer apps stop receiving video while hidden. configs = full history, newest first. Nothing ever set = \"agora\" with everything else off."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"provider is agora or cloudflare\", function () { pm.expect([\"agora\", \"cloudflare\"]).to.include(pm.response.json().provider); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "16. Set Live Media Provider",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/config/live-media",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "config",
+                "live-media"
+              ]
+            },
+            "description": "Switch live broadcasts between \"agora\" and \"cloudflare\" (needs CLOUDFLARE_REALTIME_APP_ID/SECRET on the server). agoraKickOnEnd and pauseHiddenVideo are optional — left out, they keep their current value. The provider applies to broadcasts started after this; running broadcasts keep theirs. Finance permission; audit-logged. Body is the plain-Agora default so running this collection never switches anything over by accident.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"agora\",\n  \"agoraKickOnEnd\": false,\n  \"pauseHiddenVideo\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "17. Call Media Quality (p2p vs Agora)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/calls/media-quality?days=7",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "calls",
+                "media-quality"
+              ],
+              "query": [
+                {
+                  "key": "days",
+                  "value": "7"
+                }
+              ]
+            },
+            "description": "Connection quality the apps reported at the end of each call over the last `days` days (1-90, default 7), per provider: reports, connectedPercent, relayedPercent (p2p calls that needed the TURN relay), avgConnectMs, avgRttMs, avgPacketLossPercent, avgVideoKbps. autoCalls / fellBackToAgora = how many \"auto\" calls started on p2p and how many had to switch to Agora. Check this before raising autoP2pPercent. Finance permission."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"byProvider is a list\", function () { pm.expect(pm.response.json().byProvider).to.be.an(\"array\"); });"
                 ]
               }
             }

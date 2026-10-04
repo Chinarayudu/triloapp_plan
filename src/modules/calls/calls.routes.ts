@@ -8,6 +8,7 @@ import {
   acceptCall,
   callDurationQuality,
   endCall,
+  fallBackToAgora,
   getCallById,
   getCallParticipantNames,
   initiateCall,
@@ -16,6 +17,7 @@ import {
   rejectCall,
   relayCallSignal,
 } from "./calls.service";
+import { submitCallMediaReport } from "./callMediaReports.service";
 import { submitRating } from "./ratings.service";
 
 export const callsRouter = Router();
@@ -46,14 +48,14 @@ callsRouter.post(
   async (req, res, next) => {
     try {
       const { hostId, type } = req.body as z.infer<typeof initiateSchema>;
-      const { call, channelName, hostName, mediaProvider, agoraToken, iceServers } = await initiateCall(req.user!.sub, hostId, type);
+      const { call, channelName, hostName, mediaProvider, agoraToken, iceServers, agoraFallbackAllowed } = await initiateCall(req.user!.sub, hostId, type);
       // secureMode (BACKEND_PLAN.md §5, BR-MOD-03) — always true for 1:1
       // calls, not conditional on the 18+ toggle: this whole platform is
       // treated as sensitive-by-default (BACKEND_PLAN.md §3), unlike a live
       // broadcast where only specifically-flagged content needs it.
       res
         .status(201)
-        .json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, mediaProvider, agoraToken, iceServers, hostName });
+        .json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, mediaProvider, agoraToken, iceServers, agoraFallbackAllowed, hostName });
     } catch (err) {
       next(err);
     }
@@ -103,8 +105,8 @@ callsRouter.get("/calls/:id", requireAuth, async (req, res, next) => {
 
 callsRouter.post("/calls/:id/accept", requireAuth, requireRole("host"), async (req, res, next) => {
   try {
-    const { call, channelName, callerName, mediaProvider, agoraToken, iceServers } = await acceptCall(parseCallId(req.params.id), req.user!.sub);
-    res.json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, mediaProvider, agoraToken, iceServers, callerName, userId: call.userId });
+    const { call, channelName, callerName, mediaProvider, agoraToken, iceServers, agoraFallbackAllowed } = await acceptCall(parseCallId(req.params.id), req.user!.sub);
+    res.json({ callId: call.id, status: call.status, type: call.type, channelName, secureMode: true, mediaProvider, agoraToken, iceServers, agoraFallbackAllowed, callerName, userId: call.userId });
   } catch (err) {
     next(err);
   }
@@ -160,6 +162,39 @@ callsRouter.post("/calls/:id/signal", requireAuth, signalLimiter, validateBody(s
   try {
     const { data } = req.body as z.infer<typeof signalSchema>;
     await relayCallSignal(parseCallId(req.params.id), req.user!.sub, data);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// "auto" calls: the app's direct connection failed, move this call to Agora.
+// Returns this participant's Agora credentials; the other participant gets
+// theirs via `call:media-fallback`.
+callsRouter.post("/calls/:id/media-fallback", requireAuth, async (req, res, next) => {
+  try {
+    const callId = parseCallId(req.params.id);
+    const { channelName, mediaProvider, agoraToken, iceServers, agoraFallbackAllowed } = await fallBackToAgora(callId, req.user!.sub);
+    res.json({ callId, channelName, mediaProvider, agoraToken, iceServers, agoraFallbackAllowed });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const mediaReportSchema = z.object({
+  connected: z.boolean(),
+  connectMs: z.number().int().min(0).max(600_000).optional(),
+  relayed: z.boolean().optional(),
+  avgRttMs: z.number().int().min(0).max(60_000).optional(),
+  packetLossPercent: z.number().min(0).max(100).optional(),
+  avgVideoKbps: z.number().int().min(0).max(100_000).optional(),
+});
+
+// Sent once by each app when a call ends — connection-quality numbers for
+// the admin p2p-vs-Agora comparison (GET /admin/calls/media-quality).
+callsRouter.post("/calls/:id/media-report", requireAuth, validateBody(mediaReportSchema), async (req, res, next) => {
+  try {
+    await submitCallMediaReport(parseCallId(req.params.id), req.user!.sub, req.body as z.infer<typeof mediaReportSchema>);
     res.status(204).end();
   } catch (err) {
     next(err);
