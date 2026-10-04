@@ -63,10 +63,28 @@ giftsRouter.post(
         emitToRoom(liveRoomName(contextId), "gift:received", giftReceivedPayload);
       }
 
+      // A chat gift is also a message in the conversation — sent live to both
+      // people (the sender's other devices included), same shape as history.
+      let chatMessage = null;
+      if (result.chatMessage) {
+        chatMessage = {
+          messageId: result.chatMessage.id,
+          conversationId: result.chatMessage.conversationId,
+          senderId: req.user!.sub,
+          type: "gift" as const,
+          gift: { id: result.gift.id, name: result.gift.name, iconUrl: result.gift.iconUrl },
+          content: "",
+          createdAt: result.chatMessage.createdAt,
+        };
+        emitToUser(recipientId, "chat:message", chatMessage);
+        emitToUser(req.user!.sub, "chat:message", chatMessage);
+      }
+
       res.status(201).json({
         giftTransactionId: result.id,
         gift: { id: result.gift.id, name: result.gift.name, pricePaise: result.gift.pricePaise },
         beansCredited: result.beansCredited,
+        chatMessage, // null unless context: "chat"
       });
     } catch (err) {
       next(err);

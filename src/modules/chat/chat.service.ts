@@ -1,6 +1,6 @@
 import { and, desc, eq, or } from "drizzle-orm";
 import { db } from "../../db/client";
-import { chatConversations, chatMessages, users } from "../../db/schema";
+import { chatConversations, chatMessages, giftTransactions, gifts, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { areBlocked } from "../moderation/blocks.service";
 import { getUserById } from "../users/users.service";
@@ -119,16 +119,23 @@ export async function sendPaidUserMessage(conversation: ChatConversation, conten
   return { message, userBalanceAfterPaise: transfer.userBalanceAfter };
 }
 
+// Gift messages come back with the gift that was sent ({ id, name, iconUrl },
+// from the gift catalog via the gift transaction); text messages have gift: null.
 export async function listMessages(conversationId: string, page: number, pageSize: number) {
   const offset = (page - 1) * pageSize;
-  const messages = await db
-    .select()
+  const rows = await db
+    .select({ message: chatMessages, giftId: gifts.id, giftName: gifts.name, giftIconUrl: gifts.iconUrl })
     .from(chatMessages)
+    .leftJoin(giftTransactions, eq(giftTransactions.id, chatMessages.giftTransactionId))
+    .leftJoin(gifts, eq(gifts.id, giftTransactions.giftId))
     .where(eq(chatMessages.conversationId, conversationId))
     .orderBy(desc(chatMessages.createdAt))
     .limit(pageSize)
     .offset(offset);
-  return messages;
+  return rows.map((r) => ({
+    ...r.message,
+    gift: r.message.type === "gift" && r.giftId ? { id: r.giftId, name: r.giftName, iconUrl: r.giftIconUrl } : null,
+  }));
 }
 
 export async function listConversations(viewerId: string) {

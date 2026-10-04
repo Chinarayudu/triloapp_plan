@@ -742,6 +742,11 @@ export const chatConversations = pgTable(
   (table) => [unique().on(table.userId, table.hostId)],
 );
 
+// "gift" = a gift sent from the chat (gifts.service.ts) — content is empty and
+// giftTransactionId points at the gift actually sent; it's never charged the
+// per-message price, the gift price covers it.
+export const chatMessageTypeEnum = pgEnum("chat_message_type", ["text", "gift"]);
+
 export const chatMessages = pgTable("chat_messages", {
   id: uuid("id").primaryKey().defaultRandom(),
   conversationId: uuid("conversation_id")
@@ -750,6 +755,8 @@ export const chatMessages = pgTable("chat_messages", {
   senderId: uuid("sender_id")
     .notNull()
     .references(() => users.id),
+  type: chatMessageTypeEnum("type").notNull().default("text"),
+  giftTransactionId: uuid("gift_transaction_id").references(() => giftTransactions.id),
   content: text("content").notNull(),
   // Snapshots of what a user→host message cost (same reasoning as
   // giftTransactions' snapshots). All zero for host→user messages, which are free.

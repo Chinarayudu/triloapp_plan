@@ -1,12 +1,14 @@
 import { eq } from "drizzle-orm";
 import { db } from "../../db/client";
-import { giftContextEnum, giftTransactions, gifts } from "../../db/schema";
+import { chatConversations, chatMessages, giftContextEnum, giftTransactions, gifts } from "../../db/schema";
 import { AppError } from "../../lib/errors";
+import { findOrCreateConversation } from "../chat/chat.service";
 import { getUserById } from "../users/users.service";
 import { getCurrentCommissionBasisPoints, getCurrentPaisePerBean, transferUserToHost } from "../wallet/wallet.service";
 import { notifyIfLevelledUp } from "../hosts/levels";
 
 type Gift = typeof gifts.$inferSelect;
+type ChatMessage = typeof chatMessages.$inferSelect;
 type GiftContext = (typeof giftContextEnum.enumValues)[number];
 
 export async function listActiveGifts(): Promise<Gift[]> {
@@ -37,6 +39,12 @@ export async function sendGift(
   // a later admin config change shouldn't rewrite a gift already sent.
   // recipientId (the host) is passed so a per-host override (BR-COM-03)
   // applies here too, same as calls.
+  // A chat gift also appears in the conversation as a gift message, so it must
+  // belong to the real (user, host) conversation — found or created exactly like
+  // a first text message (including the block check), never taken on trust
+  // from the client's contextId.
+  const conversation = context === "chat" ? await findOrCreateConversation(senderId, "user", recipientId) : null;
+
   const commissionBasisPointsSnapshot = await getCurrentCommissionBasisPoints(recipientId);
   const paisePerBeanSnapshot = await getCurrentPaisePerBean();
   const price = gift.pricePaise;
@@ -44,7 +52,7 @@ export async function sendGift(
   const netToHost = price - commissionAmount;
   const beans = Math.floor(netToHost / paisePerBeanSnapshot);
 
-  const { giftTxn, transfer } = await db.transaction(async (tx) => {
+  const { giftTxn, transfer, chatMessage } = await db.transaction(async (tx) => {
     const [giftTxn] = await tx
       .insert(giftTransactions)
       .values({
@@ -52,7 +60,7 @@ export async function sendGift(
         recipientId,
         giftId,
         context,
-        contextId,
+        contextId: conversation ? conversation.id : contextId,
         pricePaiseSnapshot: price,
         commissionBasisPointsSnapshot,
         paisePerBeanSnapshot,
@@ -71,9 +79,20 @@ export async function sendGift(
       creditIdempotencyKey: `gift:${giftTxn.id}:credit`,
     });
 
-    return { giftTxn, transfer };
+    // Same transaction as the charge: a gift message exists exactly when the
+    // gift was paid for. No per-message charge — the gift price covers it.
+    let chatMessage: ChatMessage | null = null;
+    if (conversation) {
+      [chatMessage] = await tx
+        .insert(chatMessages)
+        .values({ conversationId: conversation.id, senderId, type: "gift", giftTransactionId: giftTxn.id, content: "" })
+        .returning();
+      await tx.update(chatConversations).set({ lastMessageAt: chatMessage.createdAt }).where(eq(chatConversations.id, conversation.id));
+    }
+
+    return { giftTxn, transfer, chatMessage };
   });
 
   notifyIfLevelledUp(recipientId, transfer.hostLifetimeBeansBefore, transfer.hostLifetimeBeansAfter);
-  return { ...giftTxn, gift };
+  return { ...giftTxn, gift, chatMessage };
 }

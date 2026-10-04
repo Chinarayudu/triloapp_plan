@@ -1613,7 +1613,8 @@
                   "value": "50"
                 }
               ]
-            }
+            },
+            "description": "Newest first. Every message has type: \"text\" or \"gift\"; gift messages also have gift: { id, name, iconUrl } (null on text messages) and empty content."
           }
         }
       ]
@@ -1759,7 +1760,7 @@
                 "send"
               ]
             },
-            "description": "Funds the host's bean balance so Withdrawals below has something to withdraw."
+            "description": "Funds the host's bean balance so Withdrawals below has something to withdraw. With context \"chat\": the gift also becomes a message in that conversation (created if none exists yet), in the same transaction as the charge — no per-message price on top. Response adds chatMessage: { messageId, conversationId, senderId, type: \"gift\", gift: { id, name, iconUrl }, content: \"\", createdAt } (null for other contexts), and the same object is pushed as chat:message to both people. contextId is ignored for chat — the real (user, host) conversation is always used."
           }
         }
       ]

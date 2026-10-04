@@ -44,6 +44,7 @@ chatRouter.post("/chat/messages", requireAuth, validateBody(sendMessageSchema), 
       conversationId: conversation.id,
       messageId: message.id,
       senderId,
+      type: "text" as const,
       content: message.content,
       createdAt: message.createdAt,
     };
