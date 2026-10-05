@@ -14,6 +14,7 @@ import { liveRouter } from "./modules/live/live.routes";
 import { moderationRouter } from "./modules/moderation/moderation.routes";
 import { notificationsRouter } from "./modules/notifications/notifications.routes";
 import { cashfreeWebhookRouter } from "./modules/payments/cashfreeWebhook.routes";
+import { supportAdminRouter, supportRouter } from "./modules/support/support.routes";
 import { usersRouter } from "./modules/users/users.routes";
 import { earningsRouter } from "./modules/wallet/earnings.routes";
 import { vipRouter } from "./modules/wallet/vip.routes";
@@ -64,6 +65,7 @@ export function createApp(): Express {
     withdrawalsRouter,
     moderationRouter,
     notificationsRouter,
+    supportRouter,
   ];
   for (const prefix of ["/user", "/host"]) {
     app.use(`${prefix}/auth`, otpAuthRouter);
@@ -71,6 +73,7 @@ export function createApp(): Express {
   }
 
   app.use(adminRouter);
+  app.use(supportAdminRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -154,6 +154,11 @@
       "key": "reportId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "supportTicketId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -2317,6 +2322,229 @@
             },
             "description": "On-demand check that every wallet's cached balance agrees with its own ledger history (finance permission)."
           }
+        }
+      ]
+    },
+    {
+      "name": "Support (Host tickets)",
+      "description": "Host support chat — needs the 'moderation' admin permission. Step 1 opens a ticket as the setup test host so the rest has something to act on.",
+      "item": [
+        {
+          "name": "1. (Host) Open a Ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Can't go live\",\n  \"category\": \"live\",\n  \"content\": \"The Go live button does nothing\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/host/me/support/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "support",
+                "tickets"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set(\"supportTicketId\", pm.response.json().ticket.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. List Tickets",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/tickets?status=open",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "tickets"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "open"
+                }
+              ]
+            },
+            "description": "{ tickets: [{ ticket, host: { id, name, phone } }] }. status=open|closed, or omit for all."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Get Ticket",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/tickets/{{supportTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "tickets",
+                "{{supportTicketId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Reply as Agent",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Thanks — we're looking into it.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/tickets/{{supportTicketId}}/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "tickets",
+                "{{supportTicketId}}",
+                "messages"
+              ]
+            },
+            "description": "Sent to the host live (support:message) or as a push. Audit-logged as support.reply."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Close Ticket",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"closed\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/tickets/{{supportTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "tickets",
+                "{{supportTicketId}}"
+              ]
+            },
+            "description": "status open|closed. Audit-logged. A host writing again reopens it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
         }
       ]
     }

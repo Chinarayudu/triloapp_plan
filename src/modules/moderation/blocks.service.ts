@@ -28,7 +28,7 @@ export async function unblockUser(blockerId: string, blockedId: string): Promise
 
 export async function listBlocked(blockerId: string) {
   const rows = await db
-    .select({ id: users.id, name: users.name, role: users.role, blockedAt: userBlocks.createdAt })
+    .select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl, role: users.role, blockedAt: userBlocks.createdAt })
     .from(userBlocks)
     .innerJoin(users, eq(users.id, userBlocks.blockedId))
     .where(eq(userBlocks.blockerId, blockerId));

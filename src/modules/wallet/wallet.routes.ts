@@ -5,6 +5,7 @@ import { env } from "../../config/env";
 import { AppError } from "../../lib/errors";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
+import { getMinimumWithdrawalBeans } from "../withdrawals/withdrawal.service";
 import {
   devResolveRecharge,
   getRechargeTxnById,
@@ -26,9 +27,21 @@ export const walletRouter = Router();
 // than inferring it from a balance that could legitimately be zero.
 // Every call/gift snapshots its own rate at transaction time (calls.service.ts,
 // gifts.service.ts); this is only "what's the rate right now," for display.
+// minWithdrawalBeans is derived from the live admin withdrawal policy
+// (withdrawal.service.ts). invoiceCompany is the platform's own billing
+// identity for the Host app's invoice "Billed to" box — null until all three
+// INVOICE_COMPANY_* env vars are set.
 walletRouter.get("/config", requireAuth, async (_req, res, next) => {
   try {
-    res.json({ paisePerBean: await getCurrentPaisePerBean() });
+    const invoiceCompany =
+      env.INVOICE_COMPANY_NAME && env.INVOICE_COMPANY_ADDRESS && env.INVOICE_COMPANY_GSTIN
+        ? { name: env.INVOICE_COMPANY_NAME, address: env.INVOICE_COMPANY_ADDRESS, gstin: env.INVOICE_COMPANY_GSTIN }
+        : null;
+    res.json({
+      paisePerBean: await getCurrentPaisePerBean(),
+      minWithdrawalBeans: await getMinimumWithdrawalBeans(),
+      invoiceCompany,
+    });
   } catch (err) {
     next(err);
   }

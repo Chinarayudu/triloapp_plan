@@ -1,6 +1,6 @@
 import { and, count, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { calls, hostFollows, hostGalleryItems, hostProfiles, hostWallets, users } from "../../db/schema";
+import { calls, giftTransactions, hostFollows, hostGalleryItems, hostProfiles, hostWallets, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { getHostRatingSummaries, getHostRatingSummary, RatingSummary } from "../calls/ratings.service";
 import { effectiveRate, getHostEffectivePrices, levelForLifetimeBeans, pricesForLevel } from "./levels";
@@ -192,4 +192,29 @@ export async function getHostDetail(hostId: string, viewerId: string) {
     followerCount: Number(followerCount),
     isFollowing: Number(isFollowingCount) > 0,
   };
+}
+
+// Host app Profile cards (Followers / Talk time / Gifts). Talk time is real
+// connected time on completed calls (startedAt → endedAt), not billed ticks.
+export async function getHostStats(hostId: string) {
+  const [[followers], [talk], [gifts]] = await Promise.all([
+    db.select({ value: count() }).from(hostFollows).where(eq(hostFollows.hostId, hostId)),
+    db
+      .select({
+        seconds: sql<string>`coalesce(sum(extract(epoch from (${calls.endedAt} - ${calls.startedAt}))), 0)`,
+      })
+      .from(calls)
+      .where(and(eq(calls.hostId, hostId), eq(calls.status, "completed"), sql`${calls.startedAt} is not null`, sql`${calls.endedAt} is not null`)),
+    db.select({ value: count() }).from(giftTransactions).where(eq(giftTransactions.recipientId, hostId)),
+  ]);
+  return {
+    followersCount: Number(followers.value),
+    talkTimeSeconds: Math.round(Number(talk.seconds)),
+    giftsReceivedCount: Number(gifts.value),
+  };
+}
+
+// Host app "HST-1001" id — derived from the sequential host_profiles.host_number.
+export function hostingIdFor(hostNumber: number): string {
+  return `HST-${1000 + hostNumber}`;
 }

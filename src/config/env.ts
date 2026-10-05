@@ -121,6 +121,11 @@ const envSchema = z.object({
   // notify_url (webhook). Unset = no webhook; payments are then only
   // confirmed when the app checks the order status (GET /wallet/recharge/:id).
   BACKEND_PUBLIC_URL: z.string().url().optional(),
+  // The platform's legal billing identity, shown in the Host app invoice's
+  // "Billed to" box (GET /config's invoiceCompany). All three or none.
+  INVOICE_COMPANY_NAME: z.string().optional(),
+  INVOICE_COMPANY_ADDRESS: z.string().optional(),
+  INVOICE_COMPANY_GSTIN: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

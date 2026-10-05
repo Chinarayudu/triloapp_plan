@@ -10,6 +10,8 @@ import { requireAuth, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
 import { getHostRatingSummary } from "../calls/ratings.service";
 import { addGalleryItem, deleteOwnGalleryItem, listGalleryItems } from "../hosts/gallery.service";
+import { getHostStats, hostingIdFor } from "../hosts/hosts.service";
+import { getOrCreateReferralCode, listReferrals } from "../hosts/referrals.service";
 import { getHostLevelPrices, getHostLevelSummary } from "../hosts/levels";
 import {
   addPayoutMethod,
@@ -29,10 +31,24 @@ usersRouter.get("/me", requireAuth, async (req, res, next) => {
     const user = await getUserById(req.user!.sub);
     if (!user) throw new AppError(404, "User not found");
 
-    const hostProfile =
-      user.role === "host"
-        ? { ...(await getHostProfile(user.id)), rating: await getHostRatingSummary(user.id) }
-        : undefined;
+    let hostProfile;
+    let hostingId: string | undefined;
+    let referralCode: string | undefined;
+    if (user.role === "host") {
+      const profile = await getHostProfile(user.id);
+      if (!profile) throw new Error(`No host profile row for host ${user.id}`);
+      // The 5 extra interest categories are columns; the app reads all 7 as one
+      // `interests` object (hobbies/sports also stay top-level, as before).
+      const { interests, film, music, traveling, food, hostNumber, ...rest } = profile;
+      hostProfile = {
+        ...rest,
+        rating: await getHostRatingSummary(user.id),
+        stats: await getHostStats(user.id),
+        interests: { interests, hobbies: profile.hobbies, sports: profile.sports, film, music, traveling, food },
+      };
+      hostingId = hostingIdFor(hostNumber);
+      referralCode = await getOrCreateReferralCode(user.id, user.referralCode);
+    }
 
     res.json({
       id: user.id,
@@ -43,11 +59,14 @@ usersRouter.get("/me", requireAuth, async (req, res, next) => {
       email: user.email,
       avatarUrl: user.avatarUrl,
       dob: user.dob,
+      dateOfBirth: user.dob, // same value; the Host app's profile screens read this name
       ageVerified: user.ageVerified,
       languages: user.languages,
       kycStatus: user.kycStatus,
       status: user.status,
       isVipActive: user.role === "user" ? await isVipActive(user.id) : undefined,
+      hostingId,
+      referralCode,
       hostProfile,
     });
   } catch (err) {
@@ -145,6 +164,8 @@ usersRouter.post("/me/delete-account", requireAuth, validateBody(deleteAccountSc
   }
 });
 
+const interestList = z.array(z.string().trim().min(1).max(50)).max(20).optional();
+
 const updateHostProfileSchema = z.object({
   bio: z.string().max(500).optional(),
   gallery: z.array(z.string().url()).max(20).optional(),
@@ -161,6 +182,20 @@ const updateHostProfileSchema = z.object({
   talksAboutTags: z.array(z.string().min(1)).max(20).optional(),
   hobbies: z.array(z.string().min(1)).max(20).optional(),
   sports: z.array(z.string().min(1)).max(20).optional(),
+  // Host app Edit profile's chips, all 7 categories at once — free text. Any
+  // category left out is unchanged. hobbies/sports here write the same columns
+  // as the top-level hobbies/sports above.
+  interests: z
+    .object({
+      interests: interestList,
+      hobbies: interestList,
+      sports: interestList,
+      film: interestList,
+      music: interestList,
+      traveling: interestList,
+      food: interestList,
+    })
+    .optional(),
 });
 
 usersRouter.patch(
@@ -170,7 +205,7 @@ usersRouter.patch(
   validateBody(updateHostProfileSchema),
   async (req, res, next) => {
     try {
-      const updates = req.body as z.infer<typeof updateHostProfileSchema>;
+      const { interests, ...updates } = req.body as z.infer<typeof updateHostProfileSchema>;
       const { level, max } = await getHostLevelPrices(req.user!.sub);
       const capped: Array<[number | null | undefined, number, string]> = [
         [updates.ratePerMinutePaise, max.videoRatePerMinutePaise, "Video rate"],
@@ -184,7 +219,7 @@ usersRouter.patch(
       }
       const [updated] = await db
         .update(hostProfiles)
-        .set({ ...updates, updatedAt: new Date() })
+        .set({ ...updates, ...interests, updatedAt: new Date() })
         .where(eq(hostProfiles.userId, req.user!.sub))
         .returning();
       res.json(updated);
@@ -193,6 +228,21 @@ usersRouter.patch(
     }
   },
 );
+
+const referralsQuerySchema = z.object({ type: z.enum(["streamers", "agents"]).default("streamers") });
+
+// Host app "My referrals" — hosts who signed up with this host's code.
+// Tracking only: earnedForYouPaise is 0 (no referral payout is defined yet),
+// and "agents" is always empty (see hosts/referrals.service.ts).
+usersRouter.get("/me/referrals", requireAuth, requireRole("host"), async (req, res, next) => {
+  try {
+    const parsed = referralsQuerySchema.safeParse(req.query);
+    if (!parsed.success) throw new AppError(400, "type must be streamers or agents");
+    res.json({ referrals: await listReferrals(req.user!.sub, parsed.data.type) });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Host app's Level screen — current level, progress to the next, the prices
 // the host is charging now vs. their level maximum, and the full 20-level table.

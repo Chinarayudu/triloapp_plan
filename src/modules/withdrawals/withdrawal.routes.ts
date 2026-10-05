@@ -50,7 +50,9 @@ withdrawalsRouter.get("/withdrawals", requireAuth, requireRole("host"), async (r
     for (const request of await listWithdrawalsForHost(req.user!.sub)) {
       requests.push(request.status === "processing" ? await syncPayoutWithGateway(request) : request);
     }
-    res.json({ requests });
+    // Same list under both keys: `withdrawals` for the Host app's My withdrawals
+    // screen, `requests` kept so existing callers don't break.
+    res.json({ withdrawals: requests, requests });
   } catch (err) {
     next(err);
   }

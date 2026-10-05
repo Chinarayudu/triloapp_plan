@@ -57,6 +57,33 @@ export async function getActiveSlabForBeans(beans: number) {
   return match;
 }
 
+// GET /config's minWithdrawalBeans (Host app KYC screen) — the smallest bean
+// amount requestWithdrawal would accept on amount: beans × the slab rate
+// getActiveSlabForBeans picks for that amount must reach the policy minimum.
+// Derived from the live admin policy so the screen can never disagree with the
+// rule actually enforced. Assumes fees stay below the minimum (a policy where
+// they don't would make every small withdrawal fail anyway). null if no slab
+// can reach the minimum.
+export async function getMinimumWithdrawalBeans(): Promise<number | null> {
+  const policy = await getActiveWithdrawalPolicy();
+  const rows = await db
+    .select()
+    .from(withdrawalSlabs)
+    .where(lte(withdrawalSlabs.effectiveFrom, new Date()))
+    .orderBy(desc(withdrawalSlabs.effectiveFrom));
+  const slabFor = (beans: number) => rows.find((row) => beans >= row.minBeans && (row.maxBeans === null || beans <= row.maxBeans));
+
+  let smallest: number | null = null;
+  for (const row of rows) {
+    const candidate = Math.max(1, row.minBeans, Math.ceil(policy.minAmountPaise / row.paisePerBean));
+    if (row.maxBeans !== null && candidate > row.maxBeans) continue;
+    const applied = slabFor(candidate); // overlapping ranges: the slab that would really apply
+    if (!applied || candidate * applied.paisePerBean < policy.minAmountPaise) continue;
+    if (smallest === null || candidate < smallest) smallest = candidate;
+  }
+  return smallest;
+}
+
 export async function listWithdrawalsForHost(hostId: string): Promise<WithdrawalRequest[]> {
   return db.select().from(withdrawalRequests).where(eq(withdrawalRequests.hostId, hostId)).orderBy(desc(withdrawalRequests.createdAt));
 }

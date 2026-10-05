@@ -1,10 +1,12 @@
 import {
+  AnyPgColumn,
   boolean,
   integer,
   jsonb,
   pgEnum,
   pgTable,
   real,
+  serial,
   text,
   timestamp,
   unique,
@@ -48,6 +50,11 @@ export const users = pgTable("users", {
   // Nullable: existing accounts predate this field, and picking one isn't
   // forced at signup.
   username: text("username").unique(),
+  // Refer & earn (Host app). Tracking only for now: who joined with whose
+  // code. No referral payout exists yet — the business hasn't defined one.
+  // The code is generated on first GET /me (users.service.ts), not at signup.
+  referralCode: text("referral_code").unique(),
+  referredByUserId: uuid("referred_by_user_id").references((): AnyPgColumn => users.id),
   email: text("email"),
   // Public profile photo (User/Host Edit Profile screens) — a public S3 URL,
   // same "presign an upload, hand back the final url" pattern as
@@ -139,6 +146,15 @@ export const hostProfiles = pgTable("host_profiles", {
   talksAboutTags: text("talks_about_tags").array().notNull().default([]),
   hobbies: text("hobbies").array().notNull().default([]),
   sports: text("sports").array().notNull().default([]),
+  // Host app Edit profile's other interest chips — free text, same shape as
+  // hobbies/sports above (which the user-facing Creator profile also shows).
+  interests: text("interests").array().notNull().default([]),
+  film: text("film").array().notNull().default([]),
+  music: text("music").array().notNull().default([]),
+  traveling: text("traveling").array().notNull().default([]),
+  food: text("food").array().notNull().default([]),
+  // Human-friendly host id shown in the Host app ("HST-1001"); sequential.
+  hostNumber: serial("host_number").notNull().unique(),
   // Null until the host's client saves it the first time (in-camera Beauty
   // screen, User app design follow-up).
   beautySettings: jsonb("beauty_settings").$type<BeautySettings>(),
@@ -1118,5 +1134,40 @@ export const notifications = pgTable("notifications", {
   title: text("title").notNull(),
   body: text("body").notNull(),
   read: boolean("read").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// Host support chat (Host app "Support chat"). A host opens a ticket and
+// writes messages; admins reply as "agent" from the admin dashboard
+// (admin.routes.ts). "bot" exists in the enum for the app's automated
+// greeting shape but nothing on the backend sends bot messages yet.
+// ---------------------------------------------------------------------------
+
+export const supportTicketStatusEnum = pgEnum("support_ticket_status", ["open", "closed"]);
+export const supportSenderEnum = pgEnum("support_sender", ["host", "agent", "bot"]);
+
+export const supportTickets = pgTable("support_tickets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  hostId: uuid("host_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  subject: text("subject").notNull(),
+  category: text("category").notNull(),
+  status: supportTicketStatusEnum("status").notNull().default("open"),
+  lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const supportMessages = pgTable("support_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ticketId: uuid("ticket_id")
+    .notNull()
+    .references(() => supportTickets.id, { onDelete: "cascade" }),
+  sender: supportSenderEnum("sender").notNull(),
+  // The host or admin who wrote it; null for bot messages.
+  senderUserId: uuid("sender_user_id").references(() => users.id),
+  content: text("content").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

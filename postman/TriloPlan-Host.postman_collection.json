@@ -144,6 +144,11 @@
     {
       "key": "sixDaysAgoIst",
       "value": ""
+    },
+    {
+      "key": "supportTicketId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -2529,6 +2534,305 @@
             },
             "description": "\"Screenshot blocked\" screen calls this to log the attempt."
           }
+        }
+      ]
+    },
+    {
+      "name": "Profile Screens — Referrals & Support",
+      "description": "Host app Profile/settings screens. GET /me (Profile (Me) folder) now also returns dateOfBirth, hostingId (\"HST-1001\"), referralCode and hostProfile.stats { followersCount, talkTimeSeconds, giftsReceivedCount } + hostProfile.interests { interests, hobbies, sports, film, music, traveling, food }. GET /config adds minWithdrawalBeans (derived from the live admin withdrawal policy) and invoiceCompany ({ name, address, gstin } or null). GET /withdrawals returns the list as both `withdrawals` and `requests`; GET /moderation/blocks as both `blocks: [{ user: { id, name, avatarUrl }, blockedAt }]` and the old `blocked`.",
+      "item": [
+        {
+          "name": "1. Save Interests (Edit profile chips)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"interests\": {\n    \"interests\": [\n      \"Pets\"\n    ],\n    \"hobbies\": [\n      \"Cooking\"\n    ],\n    \"sports\": [],\n    \"film\": [],\n    \"music\": [\n      \"Lo-fi\"\n    ],\n    \"traveling\": [],\n    \"food\": []\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/host/me/host-profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "host-profile"
+              ]
+            },
+            "description": "Free-text chips, max 20 per category, 50 chars each. A category left out is unchanged. hobbies/sports are the same columns the user-facing Creator profile shows."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Get Config (min withdrawal, invoice company)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "config"
+              ]
+            },
+            "description": "{ paisePerBean, minWithdrawalBeans, invoiceCompany }. minWithdrawalBeans = smallest bean amount POST /withdrawals accepts under the current admin policy; invoiceCompany is null until INVOICE_COMPANY_NAME/_ADDRESS/_GSTIN are set on the server."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"has minWithdrawalBeans\", function () { pm.expect(pm.response.json()).to.have.property(\"minWithdrawalBeans\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. My Referrals — Streamers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/me/referrals?type=streamers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "referrals"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "streamers"
+                }
+              ]
+            },
+            "description": "{ referrals: [{ id, name, joinedAt, earnedForYouPaise }] } — hosts who signed up with this host's referralCode (sent as referralCode on POST /host/auth/otp/verify when creating the account; that response returns referralApplied). Tracking only: earnedForYouPaise is always 0 until a referral payout is defined. type=agents is always an empty list."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Create Support Ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Payout delayed\",\n  \"category\": \"withdrawals\",\n  \"content\": \"My withdrawal is still processing\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/host/me/support/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "support",
+                "tickets"
+              ]
+            },
+            "description": "Returns { ticket, messages } with the first message. Admins reply from the admin dashboard (Admin collection → Support)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set(\"supportTicketId\", pm.response.json().ticket.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. List My Support Tickets",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/me/support/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "support",
+                "tickets"
+              ]
+            },
+            "description": "{ tickets: [{ id, subject, category, status: open|closed, lastMessageAt, createdAt }] }, most recent activity first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Get Support Ticket",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/me/support/tickets/{{supportTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "support",
+                "tickets",
+                "{{supportTicketId}}"
+              ]
+            },
+            "description": "{ ticket, messages: [{ id, sender: host|agent|bot, senderName, content, createdAt }] }, oldest first. Agent replies also arrive live as the support:message socket event."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Send Support Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Any update?\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/host/me/support/tickets/{{supportTicketId}}/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "support",
+                "tickets",
+                "{{supportTicketId}}",
+                "messages"
+              ]
+            },
+            "description": "Returns the new message. Writing on a closed ticket reopens it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

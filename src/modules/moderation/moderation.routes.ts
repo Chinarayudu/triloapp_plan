@@ -72,7 +72,13 @@ moderationRouter.delete("/moderation/blocks/:userId", requireAuth, async (req, r
 
 moderationRouter.get("/moderation/blocks", requireAuth, async (req, res, next) => {
   try {
-    res.json({ blocked: await listBlocked(req.user!.sub) });
+    // `blocked` (flat rows) is what the User app reads; `blocks` is the Host
+    // app's Blocked users shape. Same people, two shapes.
+    const blocked = await listBlocked(req.user!.sub);
+    res.json({
+      blocked,
+      blocks: blocked.map((b) => ({ user: { id: b.id, name: b.name, avatarUrl: b.avatarUrl }, blockedAt: b.blockedAt })),
+    });
   } catch (err) {
     next(err);
   }

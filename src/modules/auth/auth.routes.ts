@@ -7,6 +7,7 @@ import { validateBody } from "../../middleware/validate";
 import { logger } from "../../lib/logger";
 import { verifyPassword } from "../../lib/password";
 import { recordLoginAndCheckMultiAccounting } from "../moderation/fraud.service";
+import { findReferrerByCode } from "../hosts/referrals.service";
 import { createUser, findUserByEmail, findUserByPhone } from "../users/users.service";
 import { requestOtp, verifyOtp } from "./otp.service";
 import { issueTokenPair, revokeRefreshToken, rotateRefreshToken } from "./token.service";
@@ -25,6 +26,9 @@ const verifySchema = z.object({
   // only to correlate accounts sharing one device (fraud.service.ts's
   // multi-accounting check). Absent for clients that don't send one yet.
   deviceFingerprint: z.string().min(1).max(200).optional(),
+  // Host app "Refer & earn" — another host's code, only used when this verify
+  // creates a NEW host account (hosts/referrals.service.ts).
+  referralCode: z.string().trim().min(1).max(20).optional(),
 });
 const refreshSchema = z.object({ refreshToken: z.string().min(1) });
 
@@ -58,7 +62,7 @@ export function createOtpAuthRouter(): Router {
 
   router.post("/otp/verify", validateBody(verifySchema), async (req, res, next) => {
     try {
-      const { phone, code, role, deviceFingerprint } = req.body as z.infer<typeof verifySchema>;
+      const { phone, code, role, deviceFingerprint, referralCode } = req.body as z.infer<typeof verifySchema>;
       await verifyOtp(phone, code);
 
       // Looked up strictly by (phone, role) — this phone number may
@@ -68,9 +72,14 @@ export function createOtpAuthRouter(): Router {
       // with role "user" only ever finds-or-creates that phone's USER
       // account; it can never return or escalate into its HOST account
       // (or vice versa via /host/auth/...) — they're different rows.
+      // A referral only counts for a brand-new host account. A code that isn't
+      // an active host's doesn't block signup — referralApplied tells the app.
       let user = await findUserByPhone(phone, role);
+      let referralApplied = false;
       if (!user) {
-        user = await createUser(phone, role);
+        const referrer = role === "host" && referralCode ? await findReferrerByCode(referralCode) : undefined;
+        user = await createUser(phone, role, referrer?.id);
+        referralApplied = Boolean(referrer);
       }
 
       if (user.status !== "active") {
@@ -90,6 +99,7 @@ export function createOtpAuthRouter(): Router {
       res.json({
         ...tokens,
         user: { id: user.id, role: user.role, phone: user.phone, kycStatus: user.kycStatus },
+        referralApplied,
       });
     } catch (err) {
       next(err);
