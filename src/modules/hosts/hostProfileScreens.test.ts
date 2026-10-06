@@ -138,7 +138,11 @@ describe("Host profile & settings screens", () => {
     const list = await request(app).get("/host/me/support/tickets").set(bearer(host.accessToken));
     expect(list.body.tickets.map((t: { id: string }) => t.id)).toContain(ticketId);
     expect((await request(app).get(`/host/me/support/tickets/${ticketId}`).set(bearer(otherHost.accessToken))).status).toBe(404);
-    expect((await request(app).get("/user/me/support/tickets").set(bearer(user.accessToken))).status).toBe(403);
+    // Users have their own support chat now — they see only their own tickets.
+    const userList = await request(app).get("/user/me/support/tickets").set(bearer(user.accessToken));
+    expect(userList.status).toBe(200);
+    expect(userList.body.tickets.map((t: { id: string }) => t.id)).not.toContain(ticketId);
+    expect((await request(app).get(`/user/me/support/tickets/${ticketId}`).set(bearer(user.accessToken))).status).toBe(404);
 
     const admin = await registerAndLoginAdmin();
     const adminList = await request(app).get("/admin/support/tickets?status=open").set(bearer(admin.accessToken));

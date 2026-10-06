@@ -126,6 +126,10 @@ const envSchema = z.object({
   INVOICE_COMPANY_NAME: z.string().optional(),
   INVOICE_COMPANY_ADDRESS: z.string().optional(),
   INVOICE_COMPANY_GSTIN: z.string().optional(),
+  // Claude API key for the support bot (support/supportBot.service.ts).
+  // Unset = the bot never replies, even when switched on in admin; tickets
+  // simply wait for a person, as before the bot existed.
+  ANTHROPIC_API_KEY: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

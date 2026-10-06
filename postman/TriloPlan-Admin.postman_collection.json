@@ -159,6 +159,11 @@
       "key": "supportTicketId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "supportKbArticleId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -2326,7 +2331,7 @@
       ]
     },
     {
-      "name": "Support (Host tickets)",
+      "name": "Support (tickets + bot)",
       "description": "Host support chat — needs the 'moderation' admin permission. Step 1 opens a ticket as the setup test host so the rest has something to act on.",
       "item": [
         {
@@ -2403,7 +2408,7 @@
                 }
               ]
             },
-            "description": "{ tickets: [{ ticket, host: { id, name, phone } }] }. status=open|closed, or omit for all."
+            "description": "{ tickets: [{ ticket, account: { id, name, phone, role } }] } — role is host or user. status=open|closed and needsAgent=true|false are optional filters; needsAgent=true is the queue of tickets the bot handed to a person."
           },
           "event": [
             {
@@ -2486,7 +2491,7 @@
                 "messages"
               ]
             },
-            "description": "Sent to the host live (support:message) or as a push. Audit-logged as support.reply."
+            "description": "Sent to the ticket's owner live (support:message) or as a push. Audit-logged as support.reply. Clears needsAgent, and the bot never replies on this ticket again."
           },
           "event": [
             {
@@ -2533,6 +2538,258 @@
               ]
             },
             "description": "status open|closed. Audit-logged. A host writing again reopens it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Needs-a-Person Queue",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/tickets?needsAgent=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "tickets"
+              ],
+              "query": [
+                {
+                  "key": "needsAgent",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "Tickets the bot handed over (ticket.handoffReason says why), newest activity first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Get Bot Config",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/bot-config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "bot-config"
+              ]
+            },
+            "description": "{ current: { enabled, model, maxRepliesPerTicket }, models: [...], configs: [history] }. Nothing ever set = off, claude-haiku-4-5, 6 replies."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"has current\", function () { pm.expect(pm.response.json().current).to.have.property(\"enabled\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. Set Bot Config",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/bot-config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "bot-config"
+              ]
+            },
+            "description": "model: claude-haiku-4-5 (cheapest) | claude-sonnet-5-5 | claude-opus-5-5. maxRepliesPerTicket 1-20 — after that many bot replies the ticket goes to a person. Takes effect for the next message. Moderation permission; audit-logged. Body keeps the bot off so running this collection never switches it on by accident.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": false,\n  \"model\": \"claude-haiku-4-5\",\n  \"maxRepliesPerTicket\": 6\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. List Help Articles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/kb",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "kb"
+              ]
+            },
+            "description": "{ articles: [{ id, title, content, audience: host|user|all, active, createdAt, updatedAt }] } — what the bot answers from."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. Create Help Article",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/kb",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "kb"
+              ]
+            },
+            "description": "audience: host (Host app tickets) | user (User app tickets) | all. active defaults to true; only active articles reach the bot. Audit-logged.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Postman test article\",\n  \"content\": \"Written by the Postman collection — safe to switch off.\",\n  \"audience\": \"all\",\n  \"active\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set(\"supportKbArticleId\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11. Update Help Article",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/kb/{{supportKbArticleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "kb",
+                "{{supportKbArticleId}}"
+              ]
+            },
+            "description": "Any of title, content, audience, active. Fields left out keep their value. Audit-logged.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Postman test article (edited)\"\n}"
+            }
           },
           "event": [
             {

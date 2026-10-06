@@ -145,6 +145,11 @@
       "key": "sfuSessionId",
       "value": "none",
       "type": "string"
+    },
+    {
+      "key": "supportTicketId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -2431,6 +2436,182 @@
             },
             "description": "natureOfComplaint also accepts content_objection|reinstatement|copyright_violation|judicial_order|government_request|privacy|impersonation|child_safety|other."
           }
+        }
+      ]
+    },
+    {
+      "name": "Support Chat",
+      "description": "The User app's support chat — same endpoints as the Host app's, each account only ever sees its own tickets. Messages from the user have sender \"user\"; replies come from \"bot\" (the automatic assistant) or \"agent\" (a person on the support team). ticket.needsAgent = true means the bot has handed the ticket to a person.",
+      "item": [
+        {
+          "name": "1. Create Support Ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/me/support/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "support",
+                "tickets"
+              ]
+            },
+            "description": "Returns { ticket, messages } with the first message (sender \"user\"). If the support bot is switched on (Admin → Support → Bot config) and ANTHROPIC_API_KEY is set on the server, the bot's reply arrives a few seconds later as a `support:message` socket event (sender \"bot\", senderName \"Support assistant\") — re-fetch the ticket to see it. It never arrives in this response.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Recharge not credited\",\n  \"category\": \"payments\",\n  \"content\": \"I paid ₹199 but my wallet didn't go up\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set(\"supportTicketId\", pm.response.json().ticket.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. List My Support Tickets",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/me/support/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "support",
+                "tickets"
+              ]
+            },
+            "description": "{ tickets: [ticket] }, newest activity first. Each ticket has status (open|closed), needsAgent and handoffReason."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Get Support Ticket",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/me/support/tickets/{{supportTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "support",
+                "tickets",
+                "{{supportTicketId}}"
+              ]
+            },
+            "description": "{ ticket, messages: [{ id, sender: user|bot|agent, senderName, content, createdAt }] }, oldest message first. 404 for someone else's ticket."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Send Support Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/me/support/tickets/{{supportTicketId}}/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "me",
+                "support",
+                "tickets",
+                "{{supportTicketId}}",
+                "messages"
+              ]
+            },
+            "description": "Returns the saved message. Writing on a closed ticket reopens it. If the support bot is switched on (Admin → Support → Bot config) and ANTHROPIC_API_KEY is set on the server, the bot's reply arrives a few seconds later as a `support:message` socket event (sender \"bot\", senderName \"Support assistant\") — re-fetch the ticket to see it. It never arrives in this response.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"It was yesterday evening\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

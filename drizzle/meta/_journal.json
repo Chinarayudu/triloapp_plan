@@ -204,6 +204,20 @@
       "when": 1791214637357,
       "tag": "0028_host_profile_screens",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1791274698835,
+      "tag": "0029_support_bot",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1791274712596,
+      "tag": "0030_support_tickets_account",
+      "breakpoints": true
     }
   ]
 }

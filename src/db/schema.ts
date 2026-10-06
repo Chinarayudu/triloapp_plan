@@ -1138,23 +1138,29 @@ export const notifications = pgTable("notifications", {
 });
 
 // ---------------------------------------------------------------------------
-// Host support chat (Host app "Support chat"). A host opens a ticket and
-// writes messages; admins reply as "agent" from the admin dashboard
-// (admin.routes.ts). "bot" exists in the enum for the app's automated
-// greeting shape but nothing on the backend sends bot messages yet.
+// Support chat (Host app and User app). A host or user opens a ticket and
+// writes messages; the support bot (support/supportBot.service.ts) answers
+// first, and admins reply as "agent" from the admin dashboard. Once an agent
+// has replied on a ticket, the bot stays silent on it.
 // ---------------------------------------------------------------------------
 
 export const supportTicketStatusEnum = pgEnum("support_ticket_status", ["open", "closed"]);
-export const supportSenderEnum = pgEnum("support_sender", ["host", "agent", "bot"]);
+// "host" / "user" = the account that owns the ticket (by its role).
+export const supportSenderEnum = pgEnum("support_sender", ["host", "agent", "bot", "user"]);
 
 export const supportTickets = pgTable("support_tickets", {
   id: uuid("id").primaryKey().defaultRandom(),
-  hostId: uuid("host_id")
+  // The host or user who opened it — users.role says which app.
+  accountId: uuid("account_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   subject: text("subject").notNull(),
   category: text("category").notNull(),
   status: supportTicketStatusEnum("status").notNull().default("open"),
+  // The admin queue's "needs a person": set when the bot hands the ticket
+  // over (or can't answer it), cleared when an agent replies.
+  needsAgent: boolean("needs_agent").notNull().default(false),
+  handoffReason: text("handoff_reason"),
   lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1166,8 +1172,37 @@ export const supportMessages = pgTable("support_messages", {
     .notNull()
     .references(() => supportTickets.id, { onDelete: "cascade" }),
   sender: supportSenderEnum("sender").notNull(),
-  // The host or admin who wrote it; null for bot messages.
+  // The host, user or admin who wrote it; null for bot messages.
   senderUserId: uuid("sender_user_id").references(() => users.id),
   content: text("content").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// What the support bot knows: admin-written help articles (withdrawals, KYC,
+// beans, recharges...). Only active articles for the ticket owner's app
+// ("host", "user", or "all") go into the bot's instructions.
+export const supportKbAudienceEnum = pgEnum("support_kb_audience", ["host", "user", "all"]);
+
+export const supportKbArticles = pgTable("support_kb_articles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  audience: supportKbAudienceEnum("audience").notNull().default("all"),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Admin switch for the bot (POST /admin/support/bot-config), versioned like
+// the other configs — latest row whose effectiveFrom isn't in the future wins.
+export const supportBotConfigs = pgTable("support_bot_configs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  enabled: boolean("enabled").notNull(),
+  // Which Claude model answers (see support/supportBot.service.ts's
+  // SUPPORT_BOT_MODELS) — switchable without a deploy.
+  model: text("model").notNull(),
+  // After this many bot replies on one ticket, it goes to a person.
+  maxRepliesPerTicket: integer("max_replies_per_ticket").notNull(),
+  effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

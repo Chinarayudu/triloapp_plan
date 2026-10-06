@@ -64,7 +64,7 @@ export function stubFetch(respond: (url: string, body: unknown) => unknown): Fet
   vi.stubGlobal("fetch", async (url: string, init: RequestInit = {}) => {
     const body = init.body ? JSON.parse(init.body as string) : undefined;
     seen.push({ url, method: init.method ?? "GET", headers: init.headers as Record<string, string>, body });
-    return new Response(JSON.stringify(respond(url, body) ?? {}), { status: 200 });
+    return new Response(JSON.stringify(respond(url, body) ?? {}), { status: 200, headers: { "Content-Type": "application/json" } });
   });
   return seen;
 }

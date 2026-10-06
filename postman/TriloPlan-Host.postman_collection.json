@@ -2696,7 +2696,7 @@
                 "tickets"
               ]
             },
-            "description": "Returns { ticket, messages } with the first message. Admins reply from the admin dashboard (Admin collection → Support)."
+            "description": "Returns { ticket, messages } with the first message. Admins reply from the admin dashboard (Admin collection → Support). If the support bot is switched on (Admin → Support → Bot config) and ANTHROPIC_API_KEY is set on the server, the bot's reply arrives a few seconds later as a `support:message` socket event (sender \"bot\", senderName \"Support assistant\") — re-fetch the ticket to see it. It never arrives in this response."
           },
           "event": [
             {
@@ -2772,7 +2772,7 @@
                 "{{supportTicketId}}"
               ]
             },
-            "description": "{ ticket, messages: [{ id, sender: host|agent|bot, senderName, content, createdAt }] }, oldest first. Agent replies also arrive live as the support:message socket event."
+            "description": "{ ticket, messages: [{ id, sender: host|bot|agent, senderName, content, createdAt }] }. ticket.needsAgent = true means the bot handed it to a person."
           },
           "event": [
             {
@@ -2820,7 +2820,7 @@
                 "messages"
               ]
             },
-            "description": "Returns the new message. Writing on a closed ticket reopens it."
+            "description": "Returns the new message. Writing on a closed ticket reopens it. If the support bot is switched on (Admin → Support → Bot config) and ANTHROPIC_API_KEY is set on the server, the bot's reply arrives a few seconds later as a `support:message` socket event (sender \"bot\", senderName \"Support assistant\") — re-fetch the ticket to see it. It never arrives in this response."
           },
           "event": [
             {
