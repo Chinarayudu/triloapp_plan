@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { RequestHandler, Router } from "express";
 import { z } from "zod";
 import { writeAuditLog } from "../../lib/auditLog";
 import { AppError } from "../../lib/errors";
@@ -14,10 +14,10 @@ import {
   getTicketWithMessages,
   listOwnTickets,
   listTicketsForAdmin,
-  setTicketStatus,
+  updateTicketAsAdmin,
 } from "./support.service";
 import { getCurrentBotConfig, listBotConfigs, scheduleBotReply, setBotConfig, SUPPORT_BOT_MODELS } from "./supportBot.service";
-import { createArticle, listArticles, updateArticle } from "./supportKb.service";
+import { createArticle, deleteArticle, listArticles, updateArticle } from "./supportKb.service";
 
 function parseId(raw: unknown, label: string): string {
   const result = z.string().uuid().safeParse(raw);
@@ -36,7 +36,7 @@ const asAccount = [requireAuth, requireRole("host", "user")];
 
 supportRouter.get("/me/support/tickets", ...asAccount, async (req, res, next) => {
   try {
-    res.json({ tickets: await listOwnTickets(req.user!.sub) });
+    res.json(await listOwnTickets(req.user!.sub));
   } catch (err) {
     next(err);
   }
@@ -46,12 +46,17 @@ const createTicketSchema = z.object({
   subject: z.string().trim().min(1).max(120),
   category: z.string().trim().min(1).max(50),
   content: z.string().trim().min(1).max(2000),
+  // The call or withdrawal the ticket is about — must be the caller's own.
+  refs: z.object({ callId: z.string().uuid().nullish(), withdrawalId: z.string().uuid().nullish() }).optional(),
 });
 
 supportRouter.post("/me/support/tickets", ...asAccount, validateBody(createTicketSchema), async (req, res, next) => {
   try {
-    const { subject, category, content } = req.body as z.infer<typeof createTicketSchema>;
-    const created = await createTicket(req.user!.sub, req.user!.role as AccountRole, subject, category, content);
+    const { subject, category, content, refs } = req.body as z.infer<typeof createTicketSchema>;
+    const created = await createTicket(req.user!.sub, req.user!.role as AccountRole, subject, category, content, {
+      callId: refs?.callId ?? undefined,
+      withdrawalId: refs?.withdrawalId ?? undefined,
+    });
     scheduleBotReply(created.ticket.id);
     res.status(201).json(created);
   } catch (err) {
@@ -81,25 +86,34 @@ supportRouter.post("/me/support/tickets/:id/messages", ...asAccount, validateBod
 
 // ---- Admin dashboard (mounted once at the root, like adminRouter) ------------
 // Support reuses the "moderation" admin permission (account-facing work)
-// rather than adding a new permission to the sub-admin system.
+// rather than adding a new permission to the sub-admin system. Every write is
+// audit-logged.
 
 export const supportAdminRouter = Router();
 const asSupportAdmin = [requireAuth, requireAdminPermission("moderation")];
 
+const TICKET_STATUSES = ["open", "in_progress", "waiting_on_customer", "resolved", "closed"] as const;
+
 const ticketListQuery = z.object({
-  status: z.enum(["open", "closed"]).optional(),
+  status: z.enum([...TICKET_STATUSES, "all"]).optional(),
+  role: z.enum(["user", "host"]).optional(),
+  category: z.string().trim().min(1).max(50).optional(),
+  q: z.string().trim().min(1).max(100).optional(),
   // "true" = the queue of tickets the bot handed to a person.
   needsAgent: z
     .enum(["true", "false"])
     .optional()
     .transform((v) => (v === undefined ? undefined : v === "true")),
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).default(20),
 });
 
 supportAdminRouter.get("/admin/support/tickets", ...asSupportAdmin, async (req, res, next) => {
   try {
     const query = ticketListQuery.safeParse(req.query);
-    if (!query.success) throw new AppError(400, "status must be open or closed; needsAgent must be true or false");
-    res.json({ tickets: await listTicketsForAdmin(query.data) });
+    if (!query.success) throw new AppError(400, query.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", "));
+    const { status, ...rest } = query.data;
+    res.json(await listTicketsForAdmin({ ...rest, status: status === "all" ? undefined : status }));
   } catch (err) {
     next(err);
   }
@@ -125,34 +139,47 @@ supportAdminRouter.post("/admin/support/tickets/:id/messages", ...asSupportAdmin
   }
 });
 
-const statusSchema = z.object({ status: z.enum(["open", "closed"]) });
+const ticketUpdateSchema = z
+  .object({
+    status: z.enum(TICKET_STATUSES),
+    priority: z.enum(["low", "medium", "high", "urgent"]),
+    assigneeId: z.string().uuid().nullable(),
+  })
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, "Nothing to update");
 
-supportAdminRouter.patch("/admin/support/tickets/:id", ...asSupportAdmin, validateBody(statusSchema), async (req, res, next) => {
+supportAdminRouter.patch("/admin/support/tickets/:id", ...asSupportAdmin, validateBody(ticketUpdateSchema), async (req, res, next) => {
   try {
     const ticketId = parseId(req.params.id, "ticket id");
-    const { status } = req.body as z.infer<typeof statusSchema>;
-    const ticket = await setTicketStatus(ticketId, status);
-    await writeAuditLog(req.user!.sub, `support.${status}`, "support_ticket", ticketId);
-    res.json(ticket);
+    const update = req.body as z.infer<typeof ticketUpdateSchema>;
+    const { before, after } = await updateTicketAsAdmin(ticketId, update);
+    const changed = Object.keys(update) as (keyof typeof update)[];
+    await writeAuditLog(req.user!.sub, update.status ? `support.${update.status}` : "support.update", "support_ticket", ticketId, {
+      before: Object.fromEntries(changed.map((k) => [k, before[k]])),
+      after: update,
+    });
+    res.json(after);
   } catch (err) {
     next(err);
   }
 });
 
-// Bot switch: on/off, which Claude model, and how many replies per ticket
-// before a person takes over. `current` is what's active; `configs` the history.
+// ---- Bot settings ------------------------------------------------------------
+// Two path sets for the same settings: /bot-config (first built) and
+// /bot-settings (the admin dashboard's Support Bot page).
+
+const botConfigSchema = z.object({
+  enabled: z.boolean(),
+  model: z.enum(SUPPORT_BOT_MODELS),
+  maxRepliesPerTicket: z.number().int().min(1).max(20),
+});
+
 supportAdminRouter.get("/admin/support/bot-config", ...asSupportAdmin, async (_req, res, next) => {
   try {
     res.json({ current: await getCurrentBotConfig(), models: SUPPORT_BOT_MODELS, configs: await listBotConfigs() });
   } catch (err) {
     next(err);
   }
-});
-
-const botConfigSchema = z.object({
-  enabled: z.boolean(),
-  model: z.enum(SUPPORT_BOT_MODELS),
-  maxRepliesPerTicket: z.number().int().min(1).max(20),
 });
 
 supportAdminRouter.post("/admin/support/bot-config", ...asSupportAdmin, validateBody(botConfigSchema), async (req, res, next) => {
@@ -163,14 +190,29 @@ supportAdminRouter.post("/admin/support/bot-config", ...asSupportAdmin, validate
   }
 });
 
-// The bot's help library.
-supportAdminRouter.get("/admin/support/kb", ...asSupportAdmin, async (_req, res, next) => {
+supportAdminRouter.get("/admin/support/bot-settings", ...asSupportAdmin, async (_req, res, next) => {
   try {
-    res.json({ articles: await listArticles() });
+    res.json({ ...(await getCurrentBotConfig()), models: SUPPORT_BOT_MODELS });
   } catch (err) {
     next(err);
   }
 });
+
+// Fields left out keep their current value.
+const botSettingsPatchSchema = botConfigSchema.partial().refine((v) => Object.keys(v).length > 0, "Nothing to update");
+
+supportAdminRouter.patch("/admin/support/bot-settings", ...asSupportAdmin, validateBody(botSettingsPatchSchema), async (req, res, next) => {
+  try {
+    const current = await getCurrentBotConfig();
+    await setBotConfig(req.user!.sub, { ...current, ...(req.body as z.infer<typeof botSettingsPatchSchema>) });
+    res.json({ ...(await getCurrentBotConfig()), models: SUPPORT_BOT_MODELS });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- Help articles -------------------------------------------------------------
+// Served at both /kb (first built) and /articles (the admin dashboard's paths).
 
 const articleFields = {
   title: z.string().trim().min(1).max(200),
@@ -178,30 +220,55 @@ const articleFields = {
   audience: z.enum(["host", "user", "all"]),
 };
 const articleSchema = z.object({ ...articleFields, active: z.boolean().default(true) });
-
-supportAdminRouter.post("/admin/support/kb", ...asSupportAdmin, validateBody(articleSchema), async (req, res, next) => {
-  try {
-    const article = await createArticle(req.body as z.infer<typeof articleSchema>);
-    await writeAuditLog(req.user!.sub, "support.kb.create", "support_kb_article", article.id);
-    res.status(201).json(article);
-  } catch (err) {
-    next(err);
-  }
-});
-
 // No default on `active` here — editing a title must not re-activate a switched-off article.
 const articlePatchSchema = z
   .object({ ...articleFields, active: z.boolean() })
   .partial()
   .refine((v) => Object.keys(v).length > 0, "Nothing to update");
 
-supportAdminRouter.patch("/admin/support/kb/:id", ...asSupportAdmin, validateBody(articlePatchSchema), async (req, res, next) => {
+const listArticlesHandler: RequestHandler = async (_req, res, next) => {
+  try {
+    res.json({ articles: await listArticles() });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const createArticleHandler: RequestHandler = async (req, res, next) => {
+  try {
+    const article = await createArticle(req.body as z.infer<typeof articleSchema>);
+    await writeAuditLog(req.user!.sub, "support.kb.create", "support_kb_article", article.id, { after: article });
+    res.status(201).json(article);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const updateArticleHandler: RequestHandler = async (req, res, next) => {
   try {
     const id = parseId(req.params.id, "article id");
     const article = await updateArticle(id, req.body as z.infer<typeof articlePatchSchema>);
-    await writeAuditLog(req.user!.sub, "support.kb.update", "support_kb_article", id);
+    await writeAuditLog(req.user!.sub, "support.kb.update", "support_kb_article", id, { after: req.body });
     res.json(article);
   } catch (err) {
     next(err);
   }
-});
+};
+
+const deleteArticleHandler: RequestHandler = async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id, "article id");
+    const article = await deleteArticle(id);
+    await writeAuditLog(req.user!.sub, "support.kb.delete", "support_kb_article", id, { before: article });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+};
+
+for (const base of ["/admin/support/kb", "/admin/support/articles"]) {
+  supportAdminRouter.get(base, ...asSupportAdmin, listArticlesHandler);
+  supportAdminRouter.post(base, ...asSupportAdmin, validateBody(articleSchema), createArticleHandler);
+  supportAdminRouter.patch(`${base}/:id`, ...asSupportAdmin, validateBody(articlePatchSchema), updateArticleHandler);
+  supportAdminRouter.delete(`${base}/:id`, ...asSupportAdmin, deleteArticleHandler);
+}

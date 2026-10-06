@@ -3,13 +3,16 @@ import { desc, eq, lte } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../../config/env";
 import { db } from "../../db/client";
-import { rechargeTxns, supportBotConfigs, users } from "../../db/schema";
+import { rechargeTxns, supportBotConfigs, users, withdrawalSlabs } from "../../db/schema";
 import { writeAuditLog } from "../../lib/auditLog";
 import { logger } from "../../lib/logger";
 import { listCallsForHost, listCallsForUser } from "../calls/calls.service";
+import { listActiveGifts } from "../gifts/gifts.service";
 import { getLatestSubmission } from "../users/kyc.service";
-import { getHostBeanBalance, getUserWalletBalance } from "../wallet/wallet.service";
-import { listWithdrawalsForHost } from "../withdrawals/withdrawal.service";
+import { listRechargePackages } from "../wallet/recharge.service";
+import { getVipCallDiscountBasisPoints, listActiveVipPlans } from "../wallet/vip.service";
+import { getCurrentCommissionBasisPoints, getCurrentPaisePerBean, getHostBeanBalance, getUserWalletBalance } from "../wallet/wallet.service";
+import { getActiveWithdrawalPolicy, getMinimumWithdrawalBeans, listWithdrawalsForHost } from "../withdrawals/withdrawal.service";
 import { AccountRole, addBotMessage, getTicket, listMessages, markNeedsAgent } from "./support.service";
 import { listActiveArticlesFor } from "./supportKb.service";
 
@@ -75,9 +78,26 @@ const HANDOFF_TOOL: Anthropic.Tool = {
     "their account is suspended or banned, they report another person, or you can't answer from the help articles and lookups.",
   input_schema: {
     type: "object",
-    properties: { reason: { type: "string", description: "One short sentence for the support team: why a person is needed." } },
-    required: ["reason"],
+    properties: {
+      reason: { type: "string", description: "One short sentence for the support team: why a person is needed." },
+      summary: {
+        type: "string",
+        description: "One paragraph for the support team: what the person needs, what you already checked, and what to look at first.",
+      },
+    },
+    required: ["reason", "summary"],
   },
+};
+
+// Amounts admins can change (withdrawal limits, commission, recharge packs,
+// VIP plans, gift prices) come from here, live — never from the help articles,
+// which would go out of date the moment an admin changes a value.
+const RULES_TOOL: Anthropic.Tool = {
+  name: "get_current_rules",
+  description:
+    "The current platform amounts for this app. Hosts: commission, bean value, and withdrawal rules (minimum, limit per period, manual-check threshold, fees, TDS, payout rates). " +
+    "Users: recharge packs, VIP plans and discount, and gift prices. Use it whenever you mention an amount or a limit.",
+  input_schema: noInput,
 };
 
 const RECENT_CALLS_TOOL: Anthropic.Tool = {
@@ -95,6 +115,7 @@ const HOST_TOOLS: Anthropic.Tool[] = [
   { name: "get_my_kyc_status", description: "Their latest KYC (identity verification) status and any rejection reason.", input_schema: noInput },
   { name: "get_my_beans_balance", description: "Their current beans balance (earnings not yet withdrawn).", input_schema: noInput },
   RECENT_CALLS_TOOL,
+  RULES_TOOL,
   HANDOFF_TOOL,
 ];
 
@@ -102,6 +123,7 @@ const USER_TOOLS: Anthropic.Tool[] = [
   { name: "get_my_wallet_balance", description: "Their current wallet balance in rupees.", input_schema: noInput },
   { name: "get_my_recharges", description: "Their 5 most recent wallet recharges: amount, status, and date.", input_schema: noInput },
   RECENT_CALLS_TOOL,
+  RULES_TOOL,
   HANDOFF_TOOL,
 ];
 
@@ -109,6 +131,7 @@ async function runTool(name: string, accountId: string, role: AccountRole): Prom
   if (role === "host" && name === "get_my_withdrawals") {
     const rows = (await listWithdrawalsForHost(accountId)).slice(0, 5);
     return rows.map((w) => ({
+      id: w.id,
       beans: w.beans,
       payout: rupees(w.netPayoutPaise),
       status: w.status,
@@ -139,6 +162,7 @@ async function runTool(name: string, accountId: string, role: AccountRole): Prom
   if (name === "get_my_recent_calls" && role === "host") {
     const { calls } = await listCallsForHost(accountId, "all", 1, 5);
     return calls.map((c) => ({
+      id: c.id,
       type: c.type,
       status: c.status,
       caller: c.callerName,
@@ -150,6 +174,7 @@ async function runTool(name: string, accountId: string, role: AccountRole): Prom
   if (name === "get_my_recent_calls" && role === "user") {
     const { calls } = await listCallsForUser(accountId, "all", 1, 5);
     return calls.map((c) => ({
+      id: c.id,
       type: c.type,
       status: c.status,
       startedAt: c.startedAt,
@@ -157,7 +182,54 @@ async function runTool(name: string, accountId: string, role: AccountRole): Prom
       charged: rupees(c.totalAmountPaise),
     }));
   }
+  if (name === "get_current_rules" && role === "host") return hostRules(accountId);
+  if (name === "get_current_rules" && role === "user") return userRules();
   throw new Error(`Unknown support bot tool: ${name}`);
+}
+
+async function hostRules(hostId: string) {
+  const [commissionBasisPoints, paisePerBean, policy, minWithdrawalBeans, slabRows] = await Promise.all([
+    getCurrentCommissionBasisPoints(hostId),
+    getCurrentPaisePerBean(),
+    getActiveWithdrawalPolicy(),
+    getMinimumWithdrawalBeans(),
+    db.select().from(withdrawalSlabs).where(lte(withdrawalSlabs.effectiveFrom, new Date())).orderBy(desc(withdrawalSlabs.effectiveFrom)),
+  ]);
+  // Slabs are replaced as a set, so the current ones are the latest batch.
+  const latest = slabRows[0]?.effectiveFrom.getTime();
+  const slabs = slabRows.filter((r) => r.effectiveFrom.getTime() === latest).sort((a, b) => a.minBeans - b.minBeans);
+  return {
+    platformCommissionPercent: commissionBasisPoints / 100,
+    beanValue: `1 bean = ${rupees(paisePerBean)} when earned`,
+    withdrawal: {
+      minimumAmount: rupees(policy.minAmountPaise),
+      minimumBeans: minWithdrawalBeans,
+      maxRequests: `${policy.maxRequestsPerWindow} every ${policy.windowDays} days`,
+      checkedManuallyAbove: rupees(policy.autoApproveThresholdPaise),
+      processingFee: rupees(policy.processingFeePaise),
+      tdsPercent: policy.tdsBasisPoints / 100,
+      payoutRates: slabs.map((s) => ({ fromBeans: s.minBeans, toBeans: s.maxBeans, valuePerBean: rupees(s.paisePerBean) })),
+    },
+  };
+}
+
+async function userRules() {
+  const [packs, vipPlans, vipDiscountBasisPoints, activeGifts] = await Promise.all([
+    listRechargePackages(),
+    listActiveVipPlans(),
+    getVipCallDiscountBasisPoints(),
+    listActiveGifts(),
+  ]);
+  return {
+    rechargePacks: packs
+      .sort((a, b) => a.pricePaise - b.pricePaise)
+      .map((p) => ({ price: rupees(p.pricePaise), ...(p.mrpPaise && p.mrpPaise > p.pricePaise ? { insteadOf: rupees(p.mrpPaise) } : {}) })),
+    vip: {
+      plans: vipPlans.map((v) => ({ name: v.name, days: v.durationDays, price: rupees(v.pricePaise) })),
+      callDiscountPercent: vipDiscountBasisPoints / 100,
+    },
+    gifts: activeGifts.sort((a, b) => a.pricePaise - b.pricePaise).map((g) => ({ name: g.name, price: rupees(g.pricePaise) })),
+  };
 }
 
 // ---- Instructions -----------------------------------------------------------
@@ -171,6 +243,7 @@ function systemPrompt(role: AccountRole, name: string, articles: { title: string
 
 How to answer:
 - Answer only from the help articles below and from what your tools return about this person's own account. If the answer isn't there, don't guess — use handoff_to_human.
+- For any amount, price, limit, fee or percentage, call get_current_rules and use what it returns — amounts change, so never take them from the articles.
 - Use handoff_to_human when they ask for a person, dispute money or ask for a refund, their account is suspended or banned, they report another person or abuse, the matter is legal or about safety, or you can't resolve it. After handing off, tell them a member of the support team will reply here.
 - You can only look things up. You can't change anything — no refunds, withdrawals, KYC decisions, or account changes — so never promise an outcome only staff can decide.
 - Reply in the language they write in (English, Hindi, or Hinglish). Keep it short: 1 to 4 sentences of plain text, no markdown.
@@ -183,7 +256,7 @@ ${library}
 
 // ---- Replying ---------------------------------------------------------------
 
-const handoffInput = z.object({ reason: z.string().min(1).max(500) });
+const handoffInput = z.object({ reason: z.string().min(1).max(500), summary: z.string().max(2000).optional() });
 
 // Answers the latest message on a ticket, if the bot should. Throws on API or
 // database errors; scheduleBotReply below turns those into a hand-off.
@@ -216,14 +289,23 @@ export async function replyAsBot(ticketId: string): Promise<void> {
   const articles = await listActiveArticlesFor(role);
   const tools = role === "host" ? HOST_TOOLS : USER_TOOLS;
 
+  // The first message carries what the ticket is about, including the call or
+  // withdrawal it was opened from, so the bot can look at the right one.
+  const ticketHeader = [
+    `Ticket subject: ${ticket.subject}`,
+    `Category: ${ticket.category}`,
+    ...(ticket.refCallId ? [`About call: ${ticket.refCallId}`] : []),
+    ...(ticket.refWithdrawalId ? [`About withdrawal: ${ticket.refWithdrawalId}`] : []),
+  ].join("\n");
   const messages: Anthropic.MessageParam[] = history.map((m, i) => {
     const fromOwner = m.sender === "host" || m.sender === "user";
-    const content = i === 0 ? `Ticket subject: ${ticket.subject}\nCategory: ${ticket.category}\n\n${m.content}` : m.content;
+    const content = i === 0 ? `${ticketHeader}\n\n${m.content}` : m.content;
     return { role: fromOwner ? "user" : "assistant", content };
   });
 
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, timeout: 30_000, maxRetries: 2 });
   let handoffReason: string | null = null;
+  let handoffSummary: string | null = null;
   let reply = "";
 
   for (let call = 1; call <= MAX_MODEL_CALLS; call++) {
@@ -266,6 +348,7 @@ export async function replyAsBot(ticketId: string): Promise<void> {
       if (block.name === "handoff_to_human") {
         const parsed = handoffInput.safeParse(block.input);
         handoffReason = parsed.success ? parsed.data.reason : "The assistant asked for a person";
+        handoffSummary = parsed.success ? (parsed.data.summary ?? null) : null;
         results.push({ type: "tool_result", tool_use_id: block.id, content: "Handed to the support team." });
         continue;
       }
@@ -284,7 +367,7 @@ export async function replyAsBot(ticketId: string): Promise<void> {
   const latest = await listMessages(ticketId);
   if (latest.some((m) => m.sender === "agent")) return;
 
-  if (handoffReason) await markNeedsAgent(ticketId, handoffReason);
+  if (handoffReason) await markNeedsAgent(ticketId, handoffReason, handoffSummary);
   await addBotMessage(await getTicket(ticketId), reply || HANDOFF_TEXT);
 }
 

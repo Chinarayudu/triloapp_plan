@@ -150,6 +150,16 @@
       "key": "supportTicketId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "chatUploadUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "chatMediaKey",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -1833,6 +1843,141 @@
             },
             "description": "Newest first. Every message has type: \"text\" or \"gift\"; gift messages also have gift: { id, name, iconUrl } (null on text messages) and empty content."
           }
+        },
+        {
+          "name": "4. Photo: Get Upload URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/chat/attachments/upload-url",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "chat",
+                "attachments",
+                "upload-url"
+              ]
+            },
+            "description": "image/jpeg, image/png or image/webp. Returns { uploadUrl (presigned PUT, 5 min), mediaKey, expiresIn: 300 }. Refused for anyone you can't message.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientId\": \"{{hostId}}\",\n  \"contentType\": \"image/jpeg\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "var j = pm.response.json(); pm.collectionVariables.set(\"chatUploadUrl\", j.uploadUrl); pm.collectionVariables.set(\"chatMediaKey\", j.mediaKey);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Photo: Upload to S3",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/jpeg",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{chatUploadUrl}}"
+            },
+            "description": "PUT the photo bytes to uploadUrl with the same Content-Type. The S3 bucket's CORS must allow PUT from both app origins.",
+            "body": {
+              "mode": "raw",
+              "raw": "postman-test-photo-bytes"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The presigned URL is a whole URL with its own query string, so set it directly.",
+                  "pm.request.url = pm.collectionVariables.get(\"chatUploadUrl\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Photo: Send Image Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/chat/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "chat",
+                "messages"
+              ]
+            },
+            "description": "Charged like a text message. Returns the usual message with type \"image\" and mediaUrl (a signed GET valid ~1 h; history and chat:message carry a fresh one). 422 if automated image moderation blocks it (then nothing is sent or charged).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientId\": \"{{hostId}}\",\n  \"type\": \"image\",\n  \"mediaKey\": \"{{chatMediaKey}}\",\n  \"content\": \"\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.test(\"image with mediaUrl\", function () { var j = pm.response.json(); pm.expect(j.type).to.eql(\"image\"); pm.expect(j.mediaUrl).to.be.a(\"string\"); });"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -2311,7 +2456,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"context\": \"call\",\n  \"contextId\": \"{{callId}}\"\n}"
+              "raw": "{\n  \"context\": \"call\",\n  \"contextId\": \"{{callId}}\",\n  \"type\": \"SCREENSHOT_ATTEMPT\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/user/moderation/capture-event",
@@ -2323,7 +2468,8 @@
                 "moderation",
                 "capture-event"
               ]
-            }
+            },
+            "description": "Optional type: SCREENSHOT_ATTEMPT | SCREEN_RECORDING_SUSPECTED | PAGE_HIDDEN | DEVTOOLS_OPENED. Only the first two count toward review; PAGE_HIDDEN and DEVTOOLS_OPENED are logged only."
           }
         }
       ]
@@ -2471,10 +2617,10 @@
                 "tickets"
               ]
             },
-            "description": "Returns { ticket, messages } with the first message (sender \"user\"). If the support bot is switched on (Admin → Support → Bot config) and ANTHROPIC_API_KEY is set on the server, the bot's reply arrives a few seconds later as a `support:message` socket event (sender \"bot\", senderName \"Support assistant\") — re-fetch the ticket to see it. It never arrives in this response.",
+            "description": "Returns { ticket, messages } with the first message (sender \"user\"). If the support bot is switched on (Admin → Support → Bot config) and ANTHROPIC_API_KEY is set on the server, the bot's reply arrives a few seconds later as a `support:message` socket event (sender \"bot\", senderName \"Support assistant\") — re-fetch the ticket to see it. It never arrives in this response. Optional refs: { callId, withdrawalId } — the call or withdrawal the ticket is about; must be your own. Tickets now also carry priority, role, requester, refs and assigneeId.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"subject\": \"Recharge not credited\",\n  \"category\": \"payments\",\n  \"content\": \"I paid ₹199 but my wallet didn't go up\"\n}"
+              "raw": "{\n  \"subject\": \"Recharge not credited\",\n  \"category\": \"payments\",\n  \"content\": \"I paid ₹199 but my wallet didn't go up\",\n  \"refs\": {\n    \"callId\": null,\n    \"withdrawalId\": null\n  }\n}"
             }
           },
           "event": [

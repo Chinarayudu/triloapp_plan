@@ -760,8 +760,9 @@ export const chatConversations = pgTable(
 
 // "gift" = a gift sent from the chat (gifts.service.ts) — content is empty and
 // giftTransactionId points at the gift actually sent; it's never charged the
-// per-message price, the gift price covers it.
-export const chatMessageTypeEnum = pgEnum("chat_message_type", ["text", "gift"]);
+// per-message price, the gift price covers it. "image" = a photo (mediaKey,
+// a private S3 object; content is an optional caption), charged like text.
+export const chatMessageTypeEnum = pgEnum("chat_message_type", ["text", "gift", "image"]);
 
 export const chatMessages = pgTable("chat_messages", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -774,6 +775,8 @@ export const chatMessages = pgTable("chat_messages", {
   type: chatMessageTypeEnum("type").notNull().default("text"),
   giftTransactionId: uuid("gift_transaction_id").references(() => giftTransactions.id),
   content: text("content").notNull(),
+  // "image" messages: the private S3 key (chat/<conversationId>/<senderId>/<uuid>.<ext>).
+  mediaKey: text("media_key"),
   // Snapshots of what a user→host message cost (same reasoning as
   // giftTransactions' snapshots). All zero for host→user messages, which are free.
   chargedPaise: integer("charged_paise").notNull().default(0),
@@ -865,7 +868,12 @@ export const liveBroadcasts = pgTable("live_broadcasts", {
     .notNull()
     .references(() => users.id),
   status: liveBroadcastStatusEnum("status").notNull().default("live"),
+  // What the host typed on the Go live screen; null for broadcasts started
+  // before titles were stored.
+  title: text("title"),
   peakViewerCount: integer("peak_viewer_count").notNull().default(0),
+  // Live chat itself isn't stored (BR-LIVE-02), only how many comments were sent.
+  commentsCount: integer("comments_count").notNull().default(0),
   mediaProvider: liveMediaProviderEnum("media_provider").notNull().default("agora"),
   // "cloudflare" only: the host's SFU session and the track names it
   // published — what each viewer's session pulls. Replaced if the host
@@ -1073,12 +1081,23 @@ export const auditLogs = pgTable("audit_logs", {
 // ---------------------------------------------------------------------------
 
 export const captureEventContextEnum = pgEnum("capture_event_context", ["call", "chat", "live"]);
+// SCREENSHOT_ATTEMPT / SCREEN_RECORDING_SUSPECTED are capture evidence and
+// count toward escalation; PAGE_HIDDEN / DEVTOOLS_OPENED are softer signals,
+// logged for the admin Security Events view only. Null = an event from
+// before types existed, which was always a capture attempt.
+export const captureEventTypeEnum = pgEnum("capture_event_type", [
+  "SCREENSHOT_ATTEMPT",
+  "SCREEN_RECORDING_SUSPECTED",
+  "PAGE_HIDDEN",
+  "DEVTOOLS_OPENED",
+]);
 
 export const captureEvents = pgTable("capture_events", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id")
     .notNull()
     .references(() => users.id),
+  type: captureEventTypeEnum("type"),
   context: captureEventContextEnum("context").notNull(),
   // Polymorphic (calls.id / chat_conversations.id / live_broadcasts.id
   // depending on context), same convention as moderationReports.targetId —
@@ -1144,7 +1163,16 @@ export const notifications = pgTable("notifications", {
 // has replied on a ticket, the bot stays silent on it.
 // ---------------------------------------------------------------------------
 
-export const supportTicketStatusEnum = pgEnum("support_ticket_status", ["open", "closed"]);
+// open → (in_progress | waiting_on_customer) → resolved → closed, set by admins;
+// the owner writing on a resolved/closed ticket reopens it to "open".
+export const supportTicketStatusEnum = pgEnum("support_ticket_status", [
+  "open",
+  "closed",
+  "in_progress",
+  "waiting_on_customer",
+  "resolved",
+]);
+export const supportTicketPriorityEnum = pgEnum("support_ticket_priority", ["low", "medium", "high", "urgent"]);
 // "host" / "user" = the account that owns the ticket (by its role).
 export const supportSenderEnum = pgEnum("support_sender", ["host", "agent", "bot", "user"]);
 
@@ -1157,10 +1185,19 @@ export const supportTickets = pgTable("support_tickets", {
   subject: text("subject").notNull(),
   category: text("category").notNull(),
   status: supportTicketStatusEnum("status").notNull().default("open"),
+  priority: supportTicketPriorityEnum("priority").notNull().default("medium"),
+  // The admin handling it, if anyone has picked it up.
+  assigneeId: uuid("assignee_id").references(() => users.id),
+  // What the ticket is about, when the owner opened it from a call or a
+  // withdrawal — checked to be the owner's own at creation.
+  refCallId: uuid("ref_call_id").references(() => calls.id),
+  refWithdrawalId: uuid("ref_withdrawal_id").references(() => withdrawalRequests.id),
   // The admin queue's "needs a person": set when the bot hands the ticket
   // over (or can't answer it), cleared when an agent replies.
   needsAgent: boolean("needs_agent").notNull().default(false),
   handoffReason: text("handoff_reason"),
+  // The bot's one-paragraph summary for staff, written when it hands over.
+  summary: text("summary"),
   lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1203,6 +1240,72 @@ export const supportBotConfigs = pgTable("support_bot_configs", {
   model: text("model").notNull(),
   // After this many bot replies on one ticket, it goes to a person.
   maxRepliesPerTicket: integer("max_replies_per_ticket").notNull(),
+  effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// Host → user gift requests (POST /gifts/request), recorded so admins can see
+// them (GET /admin/gifts/requests). Still never moves money by itself: a
+// request becomes "accepted" when that user next sends that host a gift,
+// "declined" when the user declines it (POST /gifts/request/decline).
+// ---------------------------------------------------------------------------
+
+export const giftRequestStatusEnum = pgEnum("gift_request_status", ["pending", "accepted", "declined"]);
+
+export const giftRequests = pgTable("gift_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  hostId: uuid("host_id")
+    .notNull()
+    .references(() => users.id),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  suggestedGiftId: uuid("suggested_gift_id").references(() => gifts.id),
+  note: text("note"),
+  status: giftRequestStatusEnum("status").notNull().default("pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  respondedAt: timestamp("responded_at", { withTimezone: true }),
+});
+
+// ---------------------------------------------------------------------------
+// Admin wallet adjustments (POST /admin/users/:id/adjustments) — the record of
+// who changed a user's balance and why. The money itself moves through the
+// ledger like everything else (ledger_entries.reference_id = this row's id).
+// Never deleted: a mistake is fixed with an opposite adjustment.
+// ---------------------------------------------------------------------------
+
+export const walletAdjustments = pgTable("wallet_adjustments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  adminId: uuid("admin_id")
+    .notNull()
+    .references(() => users.id),
+  // Signed: positive credits the wallet (refund/goodwill), negative corrects it down.
+  amountPaise: integer("amount_paise").notNull(),
+  reason: text("reason").notNull(),
+  // Free text — a call id makes this a "refund" in the ledger.
+  reference: text("reference"),
+  balanceAfterPaise: integer("balance_after_paise").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// App settings (GET/POST /admin/config/app-settings) — values the apps and
+// backend used to hard-code, versioned like the other configs. Exposed
+// read-only to the apps on GET /config.
+// ---------------------------------------------------------------------------
+
+export const appSettingsConfigs = pgTable("app_settings_configs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  dailyGoalSeconds: integer("daily_goal_seconds").notNull(),
+  callQualityGoodFromSeconds: integer("call_quality_good_from_seconds").notNull(),
+  callQualityExcellentFromSeconds: integer("call_quality_excellent_from_seconds").notNull(),
+  messagePriceMinPaise: integer("message_price_min_paise").notNull(),
+  messagePriceMaxPaise: integer("message_price_max_paise").notNull(),
+  liveCommentMaxLength: integer("live_comment_max_length").notNull(),
   effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

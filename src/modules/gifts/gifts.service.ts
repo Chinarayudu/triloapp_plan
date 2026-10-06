@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "../../db/client";
-import { chatConversations, chatMessages, giftContextEnum, giftTransactions, gifts } from "../../db/schema";
+import { chatConversations, chatMessages, giftContextEnum, giftRequests, giftTransactions, gifts } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { findOrCreateConversation } from "../chat/chat.service";
 import { getUserById } from "../users/users.service";
@@ -95,4 +95,33 @@ export async function sendGift(
 
   notifyIfLevelledUp(recipientId, transfer.hostLifetimeBeansBefore, transfer.hostLifetimeBeansAfter);
   return { ...giftTxn, gift, chatMessage };
+}
+
+// ---- Host → user gift requests ----------------------------------------------
+// Recorded only so admins can see them (GET /admin/gifts/requests); the
+// request itself is still just a prompt on the user's screen.
+
+export async function recordGiftRequest(hostId: string, userId: string, suggestedGiftId: string | null, note: string | null) {
+  const [request] = await db.insert(giftRequests).values({ hostId, userId, suggestedGiftId, note }).returning();
+  return request;
+}
+
+async function respondToLatestGiftRequest(hostId: string, userId: string, status: "accepted" | "declined"): Promise<void> {
+  const [latest] = await db
+    .select()
+    .from(giftRequests)
+    .where(and(eq(giftRequests.hostId, hostId), eq(giftRequests.userId, userId), eq(giftRequests.status, "pending")))
+    .orderBy(desc(giftRequests.createdAt))
+    .limit(1);
+  if (!latest) return;
+  await db.update(giftRequests).set({ status, respondedAt: new Date() }).where(eq(giftRequests.id, latest.id));
+}
+
+// The user sent this host a gift — the host's latest open request counts as answered.
+export async function markGiftRequestAccepted(hostId: string, userId: string): Promise<void> {
+  await respondToLatestGiftRequest(hostId, userId, "accepted");
+}
+
+export async function markGiftRequestDeclined(hostId: string, userId: string): Promise<void> {
+  await respondToLatestGiftRequest(hostId, userId, "declined");
 }

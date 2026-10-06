@@ -11,6 +11,7 @@ import { listFollowerIds } from "../hosts/follow.service";
 import { getUserById } from "../users/users.service";
 import {
   assertCanChat,
+  countLiveComment,
   endBroadcast,
   getBroadcastById,
   getConcurrentViewerCount,
@@ -27,6 +28,7 @@ import {
   publishBroadcastTracks,
   subscribeViewer,
 } from "./liveMedia.service";
+import { getAppSettings } from "../settings/appSettings.service";
 
 export const liveRouter = Router();
 
@@ -74,13 +76,18 @@ async function notifyFollowersHostWentLive(hostId: string, broadcastId: string):
   }
 }
 
+// The body is optional — older Host app builds start a broadcast without one.
+const startBroadcastSchema = z.object({ title: z.string().trim().max(120).optional() });
+
 liveRouter.post(
   "/live/broadcasts",
   requireAuth,
   requireRole("host"),
   async (req, res, next) => {
     try {
-      const broadcast = await startBroadcast(req.user!.sub);
+      const body = startBroadcastSchema.safeParse(req.body ?? {});
+      if (!body.success) throw new AppError(400, "title must be at most 120 characters");
+      const broadcast = await startBroadcast(req.user!.sub, body.data.title || null);
       await notifyFollowersHostWentLive(req.user!.sub, broadcast.id);
       const channelName = liveRoomName(broadcast.id);
       // Viewers join this room via POST /join below; without also joining
@@ -214,7 +221,9 @@ liveRouter.post(
   },
 );
 
-const liveChatSchema = z.object({ content: z.string().min(1).max(2000) });
+// 10,000 is only a hard ceiling; the real limit is the admin setting
+// (liveCommentMaxLength, 2000 by default), checked in the handler.
+const liveChatSchema = z.object({ content: z.string().min(1).max(10_000) });
 
 liveRouter.post(
   "/live/broadcasts/:id/chat",
@@ -226,6 +235,11 @@ liveRouter.post(
       await assertCanChat(broadcastId, req.user!.sub);
 
       const { content } = req.body as z.infer<typeof liveChatSchema>;
+      const { liveCommentMaxLength } = await getAppSettings();
+      if (content.length > liveCommentMaxLength) {
+        throw new AppError(400, `Comments can be at most ${liveCommentMaxLength} characters`);
+      }
+      await countLiveComment(broadcastId);
       const sender = await getUserById(req.user!.sub);
       const payload = {
         broadcastId,

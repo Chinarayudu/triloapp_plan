@@ -164,6 +164,11 @@
       "key": "supportKbArticleId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "callId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -2080,6 +2085,43 @@
             },
             "description": "action can be \"resolved\"/\"dismissed\", with an optional accountAction (\"warn\"/\"suspend\"/\"ban\") when the report targets an account — matches the design's single combined Dismiss/Warn/Suspend/Ban choice."
           }
+        },
+        {
+          "name": "Reported Chat (Chat between them)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/moderation/{{reportId}}/conversation",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "moderation",
+                "{{reportId}}",
+                "conversation"
+              ]
+            },
+            "description": "The chat between the reporter and the reported account, most recent 200, oldest first: { reportId, conversationId, messages: [{ id, senderId, senderName, senderRole, type, content, mediaUrl, gift, createdAt }] }. Every view is audit-logged."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is one of 200/400/404\", function () { pm.expect([200,400,404]).to.include(pm.response.code); });"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -2408,7 +2450,7 @@
                 }
               ]
             },
-            "description": "{ tickets: [{ ticket, account: { id, name, phone, role } }] } — role is host or user. status=open|closed and needsAgent=true|false are optional filters; needsAgent=true is the queue of tickets the bot handed to a person."
+            "description": "status open|in_progress|waiting_on_customer|resolved|closed|all, role user|host, category, q (subject, requester name or ticket id), needsAgent true|false, page/pageSize. Rows: flat ticket fields (id, subject, category, priority, status, role, requester, refs, assigneeId, needsAgent, handoffReason, summary...) plus the original { ticket, account }. Returns total/hasMore."
           },
           "event": [
             {
@@ -2537,7 +2579,7 @@
                 "{{supportTicketId}}"
               ]
             },
-            "description": "status open|closed. Audit-logged. A host writing again reopens it."
+            "description": "Any of { status: open|in_progress|waiting_on_customer|resolved|closed, priority: low|medium|high|urgent, assigneeId (an admin, or null) }. Audit-logged with before/after."
           },
           "event": [
             {
@@ -2798,6 +2840,883 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12. Bot Settings (dashboard path)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/bot-settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "bot-settings"
+              ]
+            },
+            "description": "Same settings as /bot-config, flat: { enabled, model, maxRepliesPerTicket, models }."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "13. Update Bot Settings (dashboard path)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/bot-settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "bot-settings"
+              ]
+            },
+            "description": "Any of { enabled, model, maxRepliesPerTicket }; fields left out keep their value. Body keeps the bot off.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "14. List Help Articles (dashboard path)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/articles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "articles"
+              ]
+            },
+            "description": "Same as /admin/support/kb."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "15. Delete Help Article",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/support/articles/{{supportKbArticleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "support",
+                "articles",
+                "{{supportKbArticleId}}"
+              ]
+            },
+            "description": "204. Also at /admin/support/kb/:id. Audit-logged with the deleted article."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 204\", function () { pm.response.to.have.status(204); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Calls (ops)",
+      "description": "Admin Calls screens. Moderation permission. Lists take page/pageSize and return total/hasMore.",
+      "item": [
+        {
+          "name": "1. Live Calls",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/calls/live",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "calls",
+                "live"
+              ]
+            },
+            "description": "{ calls: [...] } — calls ringing or in progress, newest first, with user/host names."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Call History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/calls?filter=all&page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "calls"
+              ],
+              "query": [
+                {
+                  "key": "filter",
+                  "value": "all"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "filter all|video|voice|missed; optional userId, hostId, q (call id, user name or host name), from/to (YYYY-MM-DD in tz, default Asia/Kolkata). Each row: id, type, status, endReason, userId/userName, hostId/hostName, startedAt, endedAt, durationSeconds, ratePerMinutePaiseSnapshot, totalAmountPaise, earnedPaise, durationQuality, createdAt."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "var c = pm.response.json().calls; if (c.length) { pm.collectionVariables.set(\"callId\", c[0].id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Get Call",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/calls/{{callId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "calls",
+                "{{callId}}"
+              ]
+            },
+            "description": "One call, same fields as a history row. 400/404 when no call was found in step 2."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is one of 200/400/404\", function () { pm.expect([200,400,404]).to.include(pm.response.code); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. End Call",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/calls/{{callId}}/end",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "calls",
+                "{{callId}}",
+                "end"
+              ]
+            },
+            "description": "Ends a ringing or ongoing call for both people, like a hang-up, with endReason ended_by_admin. Billing is the same as a hang-up (every completed 10-second tick is charged). 409 if the call has already ended. Audit-logged with the reason.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Ended from the admin dashboard (Postman)\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is one of 200/400/404/409\", function () { pm.expect([200,400,404,409]).to.include(pm.response.code); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Live Monitor (ops)",
+      "description": "Moderation permission.",
+      "item": [
+        {
+          "name": "1. Live Broadcasts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/live/broadcasts?status=live",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "live",
+                "broadcasts"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "live"
+                }
+              ]
+            },
+            "description": "status live|ended. { broadcasts: [{ id, title, status, hostId, hostName, startedAt, endedAt, viewerCount, peakViewerCount, giftBeans, commentsCount }] }. The older GET /admin/live-broadcasts still works."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. End Broadcast",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/live/broadcasts/{{liveBroadcastId}}/end",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "live",
+                "broadcasts",
+                "{{liveBroadcastId}}",
+                "end"
+              ]
+            },
+            "description": "Takes the host off air and tells viewers (live:ended). Audit-logged with the reason. 409 if it has already ended.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Ended from the admin dashboard (Postman)\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is one of 200/400/404/409\", function () { pm.expect([200,400,404,409]).to.include(pm.response.code); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Gift Activity (ops)",
+      "description": "Analytics permission.",
+      "item": [
+        {
+          "name": "1. Gift Transactions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/gifts/transactions?page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "gifts",
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Optional context=call|live|chat, hostId, userId, from/to. Rows: id, giftId, giftName, pricePaise, beans, senderId/senderName, hostId/hostName, context, contextId, createdAt."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Gift Requests",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/gifts/requests?page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "gifts",
+                "requests"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Host → user gift requests. Optional status=pending|accepted|declined, hostId. A request is accepted when the user next sends that host a gift, declined when the user declines it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Security Events (ops)",
+      "description": "Moderation permission.",
+      "item": [
+        {
+          "name": "1. Security Events",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/security-events?page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "security-events"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Optional role=user|host, type=SCREENSHOT_ATTEMPT|SCREEN_RECORDING_SUSPECTED|PAGE_HIDDEN|DEVTOOLS_OPENED, accountId, from/to. Returns events plus repeatOffenders (accounts with 3+ events within the same filters, most first). Events from before types existed show as SCREENSHOT_ATTEMPT."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "User Wallet & Refunds (ops)",
+      "description": "Finance permission. Every adjustment is audit-logged with before/after balance and the reason.",
+      "item": [
+        {
+          "name": "1. User Wallet",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users/{{userId}}/wallet?page=1&pageSize=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "users",
+                "{{userId}}",
+                "wallet"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "{ balancePaise, transactions: [{ id, type: recharge|call|gift|message|refund|adjustment, amountPaise (signed), balanceAfterPaise, reference, reason, createdAt }], total, hasMore } — newest first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Adjust Balance",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users/{{userId}}/adjustments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "users",
+                "{{userId}}",
+                "adjustments"
+              ]
+            },
+            "description": "amountPaise is signed: positive credits (a refund when reference is one of this user's call ids), negative corrects the balance down. reason is required (5+ characters). 422 if it would take the balance below ₹0. Adjustments are never deleted — fix a mistake with an opposite adjustment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountPaise\": 100,\n  \"reason\": \"Postman test goodwill credit\",\n  \"reference\": null\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Host Performance (ops)",
+      "description": "Analytics permission. from/to default to the last 14 days in tz (default Asia/Kolkata); at most 92 days.",
+      "item": [
+        {
+          "name": "1. Host Daily Summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/hosts/{{hostId}}/stats/daily-summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hosts",
+                "{{hostId}}",
+                "stats",
+                "daily-summary"
+              ]
+            },
+            "description": "{ days: [{ date, earningsPaise, onlineSeconds, callsCount }] } — one row per day, zero days included."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Host Summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/hosts/{{hostId}}/stats/summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hosts",
+                "{{hostId}}",
+                "stats",
+                "summary"
+              ]
+            },
+            "description": "{ onlineSeconds, earnings: { totalPaise, callsPaise, giftsPaise, livePaise, otherPaise }, calls: { received, answered, missed, rejected, avgCallSeconds }, quality: { bad, good, excellent } }."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Insights & App Settings (ops)",
+      "description": "Insights: analytics permission. App settings: finance permission.",
+      "item": [
+        {
+          "name": "1. Dashboard Insights",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/dashboard/insights",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "dashboard",
+                "insights"
+              ]
+            },
+            "description": "from/to default to the last 14 days. revenueSeries (per day: revenuePaise from calls + gifts + paid messages, callMinutes), callsByType, callsByStatus, missedRate, avgCallSeconds, hostsOnlineNow, topByOnlineTime (top 5)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"14 days\", function () { pm.expect(pm.response.json().revenueSeries.length).to.eql(14); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Get App Settings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/config/app-settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "config",
+                "app-settings"
+              ]
+            },
+            "description": "{ dailyGoalSeconds, callQuality: { goodFromSeconds, excellentFromSeconds }, messagePrice: { minPaise, maxPaise }, liveCommentMaxLength }. Also on GET /config as appSettings (read-only, for the apps)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Save App Settings",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/config/app-settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "config",
+                "app-settings"
+              ]
+            },
+            "description": "Same body as GET (+ optional reason). 422 unless every value is > 0, dailyGoalSeconds ≤ 86400, excellentFromSeconds > goodFromSeconds and maxPaise ≥ minPaise. Body here is the defaults, so running the collection changes nothing.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dailyGoalSeconds\": 21600,\n  \"callQuality\": {\n    \"goodFromSeconds\": 240,\n    \"excellentFromSeconds\": 601\n  },\n  \"messagePrice\": {\n    \"minPaise\": 500,\n    \"maxPaise\": 10000\n  },\n  \"liveCommentMaxLength\": 2000,\n  \"reason\": \"Postman: saving the defaults\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });"
                 ]
               }
             }

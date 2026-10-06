@@ -1,6 +1,6 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { liveBroadcasts, liveViewers, users } from "../../db/schema";
+import { giftTransactions, liveBroadcasts, liveViewers, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { closeLiveChannelIfEnabled, getCurrentLiveMediaConfig } from "./liveMedia.service";
 
@@ -24,14 +24,21 @@ async function getActiveBroadcastForHost(hostId: string): Promise<LiveBroadcast 
   return broadcast;
 }
 
-export async function startBroadcast(hostId: string): Promise<LiveBroadcast> {
+export async function startBroadcast(hostId: string, title: string | null): Promise<LiveBroadcast> {
   if (await getActiveBroadcastForHost(hostId)) {
     throw new AppError(409, "You already have a live broadcast running");
   }
 
   const { provider } = await getCurrentLiveMediaConfig();
-  const [broadcast] = await db.insert(liveBroadcasts).values({ hostId, mediaProvider: provider }).returning();
+  const [broadcast] = await db.insert(liveBroadcasts).values({ hostId, title, mediaProvider: provider }).returning();
   return broadcast;
+}
+
+export async function countLiveComment(broadcastId: string): Promise<void> {
+  await db
+    .update(liveBroadcasts)
+    .set({ commentsCount: sql`${liveBroadcasts.commentsCount} + 1` })
+    .where(eq(liveBroadcasts.id, broadcastId));
 }
 
 async function endBroadcastById(broadcastId: string): Promise<LiveBroadcast> {
@@ -179,4 +186,40 @@ export async function assertCanChat(broadcastId: string, senderId: string): Prom
   if (await isActiveViewer(broadcastId, senderId)) return broadcast;
 
   throw new AppError(403, "Join the broadcast before chatting in it");
+}
+
+// Admin Live Monitor (GET /admin/live/broadcasts). giftBeans is what the host
+// has earned from gifts in this broadcast; commentsCount counts live chat
+// messages (the messages themselves aren't stored, BR-LIVE-02).
+export async function listBroadcastsForLiveMonitor(status: LiveBroadcast["status"]) {
+  const rows = await db
+    .select({ broadcast: liveBroadcasts, hostName: users.name })
+    .from(liveBroadcasts)
+    .innerJoin(users, eq(users.id, liveBroadcasts.hostId))
+    .where(eq(liveBroadcasts.status, status))
+    .orderBy(desc(liveBroadcasts.startedAt))
+    .limit(200);
+
+  const result = [];
+  for (const { broadcast, hostName } of rows) {
+    const [{ giftBeans }] = await db
+      .select({ giftBeans: sql<number>`coalesce(sum(${giftTransactions.beansCredited}), 0)::int` })
+      .from(giftTransactions)
+      .where(and(eq(giftTransactions.context, "live"), eq(giftTransactions.contextId, broadcast.id)));
+    result.push({
+      id: broadcast.id,
+      title: broadcast.title,
+      status: broadcast.status,
+      hostId: broadcast.hostId,
+      hostName: hostName ?? "Unknown",
+      mediaProvider: broadcast.mediaProvider,
+      startedAt: broadcast.startedAt,
+      endedAt: broadcast.endedAt,
+      viewerCount: await getConcurrentViewerCount(broadcast.id),
+      peakViewerCount: broadcast.peakViewerCount,
+      giftBeans,
+      commentsCount: broadcast.commentsCount,
+    });
+  }
+  return result;
 }

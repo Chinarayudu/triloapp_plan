@@ -14,7 +14,8 @@
     "db:seed": "tsx src/db/seed.ts",
     "db:seed:test": "cross-env DATABASE_URL=postgresql://triloplan_test:triloplan_test@localhost:5433/triloplan_test tsx src/db/seed.ts",
     "db:seed-admin": "tsx src/db/seedAdmin.ts",
-    "db:backfill-wallets": "tsx src/db/backfillWallets.ts"
+    "db:backfill-wallets": "tsx src/db/backfillWallets.ts",
+    "db:seed-support-articles": "tsx src/db/seedSupportArticles.ts"
   },
   "repository": {
     "type": "git",
@@ -30,6 +31,7 @@
   "description": "",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
+    "@aws-sdk/client-rekognition": "^3.1146.0",
     "@aws-sdk/client-s3": "^3.1108.0",
     "@aws-sdk/s3-request-presigner": "^3.1108.0",
     "agora-token": "^2.0.5",

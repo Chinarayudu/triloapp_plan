@@ -1804,7 +1804,7 @@
                 "broadcasts"
               ]
             },
-            "description": "\"Go live\" screen's \"Start broadcast\" action. Response includes mediaProvider: \"agora\" → publish to the Agora channel with agoraToken; \"cloudflare\" → agoraToken is null; open an RTCPeerConnection with iceServers, add camera + mic, and send the offer with 1b. Publish via Cloudflare."
+            "description": "\"Go live\" screen's \"Start broadcast\" action. title (optional, up to 120 characters) is stored and shown in the admin Live Monitor. Response includes mediaProvider: \"agora\" → publish to the Agora channel with agoraToken; \"cloudflare\" → agoraToken is null; open an RTCPeerConnection with iceServers, add camera + mic, and send the offer with 1b. Publish via Cloudflare."
           },
           "event": [
             {
@@ -2696,7 +2696,7 @@
                 "tickets"
               ]
             },
-            "description": "Returns { ticket, messages } with the first message. Admins reply from the admin dashboard (Admin collection → Support). If the support bot is switched on (Admin → Support → Bot config) and ANTHROPIC_API_KEY is set on the server, the bot's reply arrives a few seconds later as a `support:message` socket event (sender \"bot\", senderName \"Support assistant\") — re-fetch the ticket to see it. It never arrives in this response."
+            "description": "Returns { ticket, messages } with the first message. Admins reply from the admin dashboard (Admin collection → Support). If the support bot is switched on (Admin → Support → Bot config) and ANTHROPIC_API_KEY is set on the server, the bot's reply arrives a few seconds later as a `support:message` socket event (sender \"bot\", senderName \"Support assistant\") — re-fetch the ticket to see it. It never arrives in this response. Optional refs: { callId, withdrawalId } — the call or withdrawal the ticket is about; must be your own."
           },
           "event": [
             {

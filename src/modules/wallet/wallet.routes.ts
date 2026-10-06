@@ -19,6 +19,7 @@ import {
   getHostBeanBalance,
   getUserWalletBalance,
 } from "./wallet.service";
+import { getAppSettings } from "../settings/appSettings.service";
 
 export const walletRouter = Router();
 
@@ -30,7 +31,9 @@ export const walletRouter = Router();
 // minWithdrawalBeans is derived from the live admin withdrawal policy
 // (withdrawal.service.ts). invoiceCompany is the platform's own billing
 // identity for the Host app's invoice "Billed to" box — null until all three
-// INVOICE_COMPANY_* env vars are set.
+// INVOICE_COMPANY_* env vars are set. appSettings are the admin-editable
+// values the apps used to hard-code (daily goal, call-quality bands,
+// message-price range, live comment length).
 walletRouter.get("/config", requireAuth, async (_req, res, next) => {
   try {
     const invoiceCompany =
@@ -41,6 +44,7 @@ walletRouter.get("/config", requireAuth, async (_req, res, next) => {
       paisePerBean: await getCurrentPaisePerBean(),
       minWithdrawalBeans: await getMinimumWithdrawalBeans(),
       invoiceCompany,
+      appSettings: await getAppSettings(),
     });
   } catch (err) {
     next(err);

@@ -9,7 +9,13 @@ import { emitToRoom, emitToUser, isUserConnected } from "../../realtime/socket";
 import { getUserById } from "../users/users.service";
 import { liveRoomName } from "../live/live.service";
 import { createNotification } from "../notifications/notifications.service";
-import { listActiveGifts, sendGift } from "./gifts.service";
+import {
+  listActiveGifts,
+  markGiftRequestAccepted,
+  markGiftRequestDeclined,
+  recordGiftRequest,
+  sendGift,
+} from "./gifts.service";
 
 export const giftsRouter = Router();
 
@@ -43,12 +49,20 @@ giftsRouter.post(
     try {
       const { recipientId, giftId, context, contextId } = req.body as z.infer<typeof sendGiftSchema>;
       const result = await sendGift(req.user!.sub, recipientId, giftId, context, contextId);
+      await markGiftRequestAccepted(recipientId, req.user!.sub);
 
+      const sender = await getUserById(req.user!.sub);
+      const senderName = sender?.name ?? "Someone";
+      const isLiveGift = context === "live" && Boolean(contextId);
+      // context/broadcastId let the host app tell a live gift from a call gift.
       const giftReceivedPayload = {
         giftTransactionId: result.id,
         senderId: req.user!.sub,
+        senderName,
         gift: { id: result.gift.id, name: result.gift.name, iconUrl: result.gift.iconUrl },
         beansCredited: result.beansCredited,
+        context: context ?? null,
+        broadcastId: isLiveGift ? contextId : null,
       };
       emitToUser(recipientId, "gift:received", giftReceivedPayload);
       if (!(await isUserConnected(recipientId))) {
@@ -59,8 +73,16 @@ giftsRouter.post(
       // Live gifts are meant to be seen by everyone watching, not just the
       // host — the same event, additionally fanned out to the broadcast
       // room (BACKEND_PLAN.md §4: "reuses the exact same gifting pipeline").
-      if (context === "live" && contextId) {
-        emitToRoom(liveRoomName(contextId), "gift:received", giftReceivedPayload);
+      if (isLiveGift) {
+        emitToRoom(liveRoomName(contextId!), "gift:received", giftReceivedPayload);
+        // The comment-feed line every viewer shows ("Rahul sent a Rose").
+        emitToRoom(liveRoomName(contextId!), "live:gift", {
+          broadcastId: contextId,
+          senderId: req.user!.sub,
+          senderName,
+          gift: { id: result.gift.id, name: result.gift.name, iconUrl: result.gift.iconUrl },
+          createdAt: new Date().toISOString(),
+        });
       }
 
       // A chat gift is also a message in the conversation — sent live to both
@@ -113,7 +135,8 @@ giftsRouter.post(
 
       // This never moves money by itself — it's purely a prompt for the
       // user's client to open the gift picker (BACKEND_PLAN.md §1).
-      const payload = { hostId: req.user!.sub, suggestedGiftId: suggestedGiftId ?? null, note: note || null };
+      const request = await recordGiftRequest(req.user!.sub, userId, suggestedGiftId ?? null, note || null);
+      const payload = { requestId: request.id, hostId: req.user!.sub, suggestedGiftId: suggestedGiftId ?? null, note: note || null };
       emitToUser(userId, "gift:requested", payload);
 
       if (!(await isUserConnected(userId))) {
@@ -129,10 +152,8 @@ giftsRouter.post(
 
 const declineGiftRequestSchema = z.object({
   hostId: z.string().uuid(),
-  // Nothing server-side tracks an in-flight gift request (POST /gifts/request
-  // above is a stateless prompt, no DB row) — giftId is only ever what the
-  // caller passes through, for the host's own logging/matching, not
-  // validated against anything here.
+  // giftId is only passed through to the host's event, not validated. The
+  // decline marks this host's latest open request to the user as declined.
   giftId: z.string().uuid().optional(),
 });
 
@@ -149,6 +170,7 @@ giftsRouter.post(
         throw new AppError(400, "Target must be an active host");
       }
 
+      await markGiftRequestDeclined(hostId, req.user!.sub);
       emitToUser(hostId, "gift:requestDeclined", { userId: req.user!.sub, giftId: giftId ?? null });
       if (!(await isUserConnected(hostId))) {
         void sendPushNotification(hostId, "Gift request declined", "The user declined your gift request");

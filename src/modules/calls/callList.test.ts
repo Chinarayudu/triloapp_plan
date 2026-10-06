@@ -5,6 +5,7 @@ import { db } from "../../db/client";
 import { calls } from "../../db/schema";
 import { registerAndLogin } from "../../test/helpers";
 import { getCurrentPaisePerBean } from "../wallet/wallet.service";
+import { DEFAULT_APP_SETTINGS } from "../settings/appSettings.service";
 import { callDurationQuality } from "./calls.service";
 
 describe("Call lists (paginated)", () => {
@@ -83,12 +84,12 @@ describe("Call lists (paginated)", () => {
     const start = new Date("2026-09-01T10:00:00Z");
     const endedAfter = (seconds: number) => ({ startedAt: start, endedAt: new Date(start.getTime() + seconds * 1000) });
 
-    expect(callDurationQuality(endedAfter(3 * 60 + 59))).toBe("bad");
-    expect(callDurationQuality(endedAfter(4 * 60))).toBe("good");
-    expect(callDurationQuality(endedAfter(10 * 60))).toBe("good");
-    expect(callDurationQuality(endedAfter(10 * 60 + 1))).toBe("excellent");
+    expect(callDurationQuality(endedAfter(3 * 60 + 59), DEFAULT_APP_SETTINGS.callQuality)).toBe("bad");
+    expect(callDurationQuality(endedAfter(4 * 60), DEFAULT_APP_SETTINGS.callQuality)).toBe("good");
+    expect(callDurationQuality(endedAfter(10 * 60), DEFAULT_APP_SETTINGS.callQuality)).toBe("good");
+    expect(callDurationQuality(endedAfter(10 * 60 + 1), DEFAULT_APP_SETTINGS.callQuality)).toBe("excellent");
     // Never connected, or still in progress.
-    expect(callDurationQuality({ startedAt: null, endedAt: start })).toBeNull();
-    expect(callDurationQuality({ startedAt: start, endedAt: null })).toBeNull();
+    expect(callDurationQuality({ startedAt: null, endedAt: start }, DEFAULT_APP_SETTINGS.callQuality)).toBeNull();
+    expect(callDurationQuality({ startedAt: start, endedAt: null }, DEFAULT_APP_SETTINGS.callQuality)).toBeNull();
   });
 });

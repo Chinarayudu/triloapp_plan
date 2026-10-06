@@ -1,6 +1,6 @@
-import { count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { db } from "../../db/client";
-import { captureEventContextEnum, captureEvents, moderationReports } from "../../db/schema";
+import { captureEventContextEnum, captureEventTypeEnum, captureEvents, moderationReports } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { writeAuditLog } from "../../lib/auditLog";
 import { sendPushNotification } from "../../lib/push";
@@ -10,6 +10,7 @@ import { getUserById } from "../users/users.service";
 type ModerationReport = typeof moderationReports.$inferSelect;
 type TargetType = ModerationReport["targetType"];
 type CaptureEventContext = (typeof captureEventContextEnum.enumValues)[number];
+type CaptureEventType = (typeof captureEventTypeEnum.enumValues)[number];
 type CapturePolicyAction = "logged" | "warning" | "escalated_for_review";
 
 // BR-MOD-04: any User/Host can report another account or a piece of
@@ -91,17 +92,33 @@ export async function warnAccount(adminId: string, accountId: string, note?: str
 const WARNING_THRESHOLD = 2;
 const ESCALATION_THRESHOLD = 4;
 
+// Only capture evidence counts toward the warning/escalation thresholds —
+// PAGE_HIDDEN and DEVTOOLS_OPENED are logged for the admin Security Events
+// view but can never push an account toward review on their own. An event
+// with no type predates types and was always a capture attempt.
+const CAPTURE_EVIDENCE_TYPES: CaptureEventType[] = ["SCREENSHOT_ATTEMPT", "SCREEN_RECORDING_SUSPECTED"];
+
 export async function logCaptureEvent(
   userId: string,
   context: CaptureEventContext,
-  contextId?: string,
+  contextId: string | undefined,
+  type: CaptureEventType | undefined,
 ): Promise<{ totalCaptureEvents: number; policyAction: CapturePolicyAction }> {
-  await db.insert(captureEvents).values({ userId, context, contextId });
+  await db.insert(captureEvents).values({ userId, context, contextId, type });
 
   const [{ value: totalCaptureEvents }] = await db
     .select({ value: count() })
     .from(captureEvents)
-    .where(eq(captureEvents.userId, userId));
+    .where(
+      and(
+        eq(captureEvents.userId, userId),
+        or(isNull(captureEvents.type), inArray(captureEvents.type, CAPTURE_EVIDENCE_TYPES)),
+      ),
+    );
+
+  if (type && !CAPTURE_EVIDENCE_TYPES.includes(type)) {
+    return { totalCaptureEvents, policyAction: "logged" };
+  }
 
   // Filed exactly once, at the moment the count crosses the threshold —
   // not on every subsequent event past it, so the queue doesn't fill with

@@ -4,13 +4,13 @@ import { db } from "../../db/client";
 import { calls, giftTransactions, hostOnlineSessions, ledgerEntries, liveBroadcasts } from "../../db/schema";
 import { addDays, dayRangeInTimeZone } from "../../lib/dayBounds";
 import { isOnline } from "../hosts/presence.store";
+import { callDurationQuality } from "../calls/calls.service";
+import { getAppSettings } from "../settings/appSettings.service";
 import { getCurrentPaisePerBean } from "./wallet.service";
 
 // Host app daily report. Earnings are on the same basis as /me/dashboard's
 // todayEarningsPaise: the host's own share (beans credited to their wallet,
 // i.e. after commission) converted at the current paise-per-bean rate.
-
-export const DAILY_GOAL_SECONDS = 6 * 60 * 60;
 
 const OTHER_EARNING_LABELS: Record<"chat_message" | "adjustment", string> = {
   chat_message: "Chat messages",
@@ -170,7 +170,6 @@ function summarizeDay(hostId: string, activity: HostActivity, date: string, dayS
 
   return {
     date,
-    dailyGoalSeconds: DAILY_GOAL_SECONDS,
     online: {
       totalSeconds: Math.floor(totalOnlineMs / 1000),
       isOnlineNow: isOnline(hostId) || inCallOrLiveNow,
@@ -202,8 +201,9 @@ function summarizeDay(hostId: string, activity: HostActivity, date: string, dayS
 
 export async function getHostDailyStats(hostId: string, date: string, tz: string, now: Date = new Date()) {
   const { start, end } = dayRangeInTimeZone(date, tz);
-  const activity = await fetchHostActivity(hostId, start, end);
-  return summarizeDay(hostId, activity, date, start, end, now);
+  const [activity, settings] = await Promise.all([fetchHostActivity(hostId, start, end), getAppSettings()]);
+  // The goal is admin-editable (settings/appSettings.service.ts), 6 hours by default.
+  return { ...summarizeDay(hostId, activity, date, start, end, now), dailyGoalSeconds: settings.dailyGoalSeconds };
 }
 
 // One row per day from..to inclusive, zero days included.
@@ -224,4 +224,50 @@ export async function getHostDailySummary(hostId: string, from: string, to: stri
     });
   }
   return { days };
+}
+
+// Admin host Performance tab (GET /admin/hosts/:id/stats/summary) — the same
+// per-day numbers as the host's own daily report, added up over from..to.
+export async function getHostRangeSummary(hostId: string, from: string, to: string, tz: string, now: Date = new Date()) {
+  const rangeStart = dayRangeInTimeZone(from, tz).start;
+  const rangeEnd = dayRangeInTimeZone(to, tz).end;
+  const [activity, settings] = await Promise.all([fetchHostActivity(hostId, rangeStart, rangeEnd), getAppSettings()]);
+
+  const totals = {
+    onlineSeconds: 0,
+    earnings: { totalPaise: 0, callsPaise: 0, giftsPaise: 0, livePaise: 0, otherPaise: 0 },
+    calls: { received: 0, answered: 0, missed: 0, rejected: 0, talkSeconds: 0 },
+  };
+  for (let date = from; date <= to; date = addDays(date, 1)) {
+    const { start, end } = dayRangeInTimeZone(date, tz);
+    const day = summarizeDay(hostId, activity, date, start, end, now);
+    totals.onlineSeconds += day.online.totalSeconds;
+    totals.earnings.totalPaise += day.earnings.totalPaise;
+    totals.earnings.callsPaise += day.earnings.videoCalls.amountPaise + day.earnings.voiceCalls.amountPaise;
+    totals.earnings.giftsPaise += day.earnings.gifts.amountPaise;
+    totals.earnings.livePaise += day.earnings.liveStreams.amountPaise;
+    totals.earnings.otherPaise += day.earnings.other.amountPaise;
+    totals.calls.received += day.calls.received;
+    totals.calls.answered += day.calls.answered;
+    totals.calls.missed += day.calls.missed;
+    totals.calls.rejected += day.calls.rejected;
+    totals.calls.talkSeconds += day.calls.talkSeconds;
+  }
+
+  // Quality bands of the finished calls that came in during the range.
+  const quality = { bad: 0, good: 0, excellent: 0 };
+  for (const c of activity.receivedCalls) {
+    const band = callDurationQuality(c, settings.callQuality);
+    if (band) quality[band] += 1;
+  }
+
+  const { talkSeconds, ...calls } = totals.calls;
+  return {
+    from,
+    to,
+    onlineSeconds: totals.onlineSeconds,
+    earnings: totals.earnings,
+    calls: { ...calls, avgCallSeconds: calls.answered > 0 ? Math.round(talkSeconds / calls.answered) : 0 },
+    quality,
+  };
 }

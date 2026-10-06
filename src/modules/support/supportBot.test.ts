@@ -125,7 +125,7 @@ describe("Support bot", () => {
     const setBot = (body: object) => request(app).post("/admin/support/bot-config").set(bearer(admin.accessToken)).send(body);
 
     env.ANTHROPIC_API_KEY = "test-key";
-    const replies = [toolUse("handoff_to_human", { reason: "Refund request" }), answer("I've asked our team to look at your refund.")];
+    const replies = [toolUse("handoff_to_human", { reason: "Refund request", summary: "User wants a refund for a call yesterday." }), answer("I've asked our team to look at your refund.")];
     const sent = stubFetch(() => replies.shift());
 
     try {
@@ -151,6 +151,11 @@ describe("Support bot", () => {
       expect(first.tools.map((t) => t.name)).toEqual(
         expect.arrayContaining(["get_my_wallet_balance", "get_my_recharges", "handoff_to_human"]),
       );
+
+      // The summary is for staff only.
+      expect(handedOff.body.ticket).not.toHaveProperty("summary");
+      const staffView = await request(app).get(`/admin/support/tickets/${ticketId}`).set(bearer(admin.accessToken));
+      expect(staffView.body.ticket.summary).toBe("User wants a refund for a call yesterday.");
 
       const queue = await request(app).get("/admin/support/tickets?needsAgent=true").set(bearer(admin.accessToken));
       const queued = queue.body.tickets.find((t: { ticket: { id: string } }) => t.ticket.id === ticketId);
@@ -203,6 +208,37 @@ describe("Support bot", () => {
         const thread = await request(app).get(`/host/me/support/tickets/${ticketId}`).set(bearer(host.accessToken));
         expect(thread.body.ticket).toMatchObject({ needsAgent: true, handoffReason: "The assistant hit an error" });
       });
+    } finally {
+      await setBot(BOT_OFF);
+    }
+  });
+
+  it("looks up the live withdrawal rules and commission instead of trusting article text", async () => {
+    const app = createApp();
+    const admin = await registerAndLoginAdmin();
+    const host = await registerAndLogin(app, "host");
+    const setBot = (body: object) => request(app).post("/admin/support/bot-config").set(bearer(admin.accessToken)).send(body);
+
+    env.ANTHROPIC_API_KEY = "test-key";
+    const replies = [toolUse("get_current_rules", {}), answer("The minimum withdrawal is shown on the Withdraw screen.")];
+    const sent = stubFetch(() => replies.shift());
+
+    try {
+      await setBot({ enabled: true, model: "claude-haiku-4-5", maxRepliesPerTicket: 6 });
+      const created = await request(app)
+        .post("/host/me/support/tickets")
+        .set(bearer(host.accessToken))
+        .send({ subject: "Limits", category: "payout", content: "What's the minimum withdrawal?" });
+      const ticketId = created.body.ticket.id as string;
+      await vi.waitFor(async () => {
+        const thread = await request(app).get(`/host/me/support/tickets/${ticketId}`).set(bearer(host.accessToken));
+        expect(thread.body.messages).toHaveLength(2);
+      });
+
+      const toolResult = (sent[1].body as ClaudeRequest).messages[2].content as { content: string }[];
+      const rules = JSON.parse(toolResult[0].content);
+      expect(rules).toMatchObject({ platformCommissionPercent: expect.any(Number), withdrawal: expect.objectContaining({ minimumAmount: expect.stringMatching(/^₹/) }) });
+      expect(rules.withdrawal.payoutRates.length).toBeGreaterThan(0);
     } finally {
       await setBot(BOT_OFF);
     }

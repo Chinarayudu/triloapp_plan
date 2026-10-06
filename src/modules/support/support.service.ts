@@ -1,25 +1,52 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, or, SQL } from "drizzle-orm";
 import { db } from "../../db/client";
-import { supportMessages, supportTickets, users } from "../../db/schema";
+import { calls, supportMessages, supportTickets, users, withdrawalRequests } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { sendPushNotification } from "../../lib/push";
 import { emitToUser, isUserConnected } from "../../realtime/socket";
 
 // Support chat (Host app and User app): a host or user opens a ticket and
 // writes; the support bot answers first (supportBot.service.ts), and admins
-// answer as "agent" from the admin dashboard. The owner writing on a closed
-// ticket reopens it.
+// answer as "agent" from the admin dashboard. The owner writing on a
+// resolved, closed or waiting-on-customer ticket sets it back to "open".
 
 type Ticket = typeof supportTickets.$inferSelect;
+type TicketStatus = Ticket["status"];
+type TicketPriority = Ticket["priority"];
 type Sender = (typeof supportMessages.$inferSelect)["sender"];
 export type AccountRole = "host" | "user";
+type Owner = { id: string; name: string | null; phone: string; role: string };
 
 const SENDER_FALLBACK_NAME: Record<Sender, string> = { host: "Host", user: "User", agent: "Support team", bot: "Support assistant" };
+
+// One shape for a ticket everywhere (app list, app thread, admin list, admin
+// thread): every stored field, plus the requester, their app (role) and the
+// refs grouped. The bot's summary is for staff only.
+function ticketView(ticket: Ticket, owner: Owner, audience: "owner" | "admin") {
+  const { summary, refCallId, refWithdrawalId, ...fields } = ticket;
+  return {
+    ...fields,
+    role: owner.role,
+    requester: { id: owner.id, name: owner.name ?? "Unknown" },
+    refs: { callId: refCallId, withdrawalId: refWithdrawalId },
+    ...(audience === "admin" ? { summary } : {}),
+  };
+}
 
 export async function getTicket(ticketId: string): Promise<Ticket> {
   const [ticket] = await db.select().from(supportTickets).where(eq(supportTickets.id, ticketId)).limit(1);
   if (!ticket) throw new AppError(404, "Ticket not found");
   return ticket;
+}
+
+async function getOwner(accountId: string): Promise<Owner> {
+  const [owner] = await db
+    .select({ id: users.id, name: users.name, phone: users.phone, role: users.role })
+    .from(users)
+    .where(eq(users.id, accountId))
+    .limit(1);
+  if (!owner) throw new Error(`Support ticket owner ${accountId} not found`);
+  return owner;
 }
 
 async function getOwnTicket(accountId: string, ticketId: string): Promise<Ticket> {
@@ -40,6 +67,8 @@ export async function listMessages(ticketId: string) {
     sender: message.sender,
     senderName: senderUserName ?? SENDER_FALLBACK_NAME[message.sender],
     content: message.content,
+    // Support chat is text-only; kept for the apps' message shape.
+    attachments: [],
     createdAt: message.createdAt,
   }));
 }
@@ -47,6 +76,9 @@ export async function listMessages(ticketId: string) {
 async function addMessage(ticket: Ticket, sender: Sender, senderUserId: string | null, content: string) {
   const now = new Date();
   const fromOwner = sender === "host" || sender === "user";
+  // The owner writing back puts the ticket in front of staff again — unless
+  // someone is already working on it.
+  const reopens = fromOwner && (ticket.status === "resolved" || ticket.status === "closed" || ticket.status === "waiting_on_customer");
   await db.transaction(async (tx) => {
     await tx.insert(supportMessages).values({ ticketId: ticket.id, sender, senderUserId, content, createdAt: now });
     await tx
@@ -54,7 +86,7 @@ async function addMessage(ticket: Ticket, sender: Sender, senderUserId: string |
       .set({
         lastMessageAt: now,
         updatedAt: now,
-        ...(fromOwner ? { status: "open" as const } : {}),
+        ...(reopens ? { status: "open" as const } : {}),
         // A person has taken the ticket over — it leaves the "needs a person" queue.
         ...(sender === "agent" ? { needsAgent: false, handoffReason: null } : {}),
       })
@@ -75,21 +107,51 @@ async function notifyOwner(ticket: Ticket, message: Awaited<ReturnType<typeof ad
 // ---- Host app / User app ----------------------------------------------------
 
 export async function listOwnTickets(accountId: string) {
-  return db.select().from(supportTickets).where(eq(supportTickets.accountId, accountId)).orderBy(desc(supportTickets.lastMessageAt));
+  const [owner, rows] = await Promise.all([
+    getOwner(accountId),
+    db.select().from(supportTickets).where(eq(supportTickets.accountId, accountId)).orderBy(desc(supportTickets.lastMessageAt)),
+  ]);
+  return { tickets: rows.map((t) => ticketView(t, owner, "owner")), total: rows.length };
 }
 
-export async function createTicket(accountId: string, role: AccountRole, subject: string, category: string, content: string) {
+export type TicketRefs = { callId?: string; withdrawalId?: string };
+
+// A ticket can point at the call or withdrawal it's about — only one of the
+// owner's own.
+async function checkRefsBelongTo(accountId: string, refs: TicketRefs): Promise<void> {
+  if (refs.callId) {
+    const [call] = await db.select().from(calls).where(eq(calls.id, refs.callId)).limit(1);
+    if (!call || (call.userId !== accountId && call.hostId !== accountId)) throw new AppError(400, "refs.callId isn't one of your calls");
+  }
+  if (refs.withdrawalId) {
+    const [withdrawal] = await db.select().from(withdrawalRequests).where(eq(withdrawalRequests.id, refs.withdrawalId)).limit(1);
+    if (!withdrawal || withdrawal.hostId !== accountId) throw new AppError(400, "refs.withdrawalId isn't one of your withdrawals");
+  }
+}
+
+export async function createTicket(
+  accountId: string,
+  role: AccountRole,
+  subject: string,
+  category: string,
+  content: string,
+  refs: TicketRefs,
+) {
+  await checkRefsBelongTo(accountId, refs);
   const ticketId = await db.transaction(async (tx) => {
-    const [ticket] = await tx.insert(supportTickets).values({ accountId, subject, category }).returning();
+    const [ticket] = await tx
+      .insert(supportTickets)
+      .values({ accountId, subject, category, refCallId: refs.callId ?? null, refWithdrawalId: refs.withdrawalId ?? null })
+      .returning();
     await tx.insert(supportMessages).values({ ticketId: ticket.id, sender: role, senderUserId: accountId, content });
     return ticket.id;
   });
-  return getTicketWithMessages(ticketId);
+  return getOwnTicketWithMessages(accountId, ticketId);
 }
 
 export async function getOwnTicketWithMessages(accountId: string, ticketId: string) {
-  await getOwnTicket(accountId, ticketId);
-  return getTicketWithMessages(ticketId);
+  const ticket = await getOwnTicket(accountId, ticketId);
+  return { ticket: ticketView(ticket, await getOwner(accountId), "owner"), messages: await listMessages(ticketId) };
 }
 
 export async function addOwnerMessage(accountId: string, role: AccountRole, ticketId: string, content: string) {
@@ -104,29 +166,63 @@ export async function addBotMessage(ticket: Ticket, content: string) {
   return message;
 }
 
-export async function markNeedsAgent(ticketId: string, reason: string): Promise<void> {
+export async function markNeedsAgent(ticketId: string, reason: string, summary: string | null = null): Promise<void> {
   await db
     .update(supportTickets)
-    .set({ needsAgent: true, handoffReason: reason, updatedAt: new Date() })
+    .set({ needsAgent: true, handoffReason: reason, ...(summary ? { summary } : {}), updatedAt: new Date() })
     .where(eq(supportTickets.id, ticketId));
 }
 
 // ---- Admin side -------------------------------------------------------------
 
 export async function getTicketWithMessages(ticketId: string) {
-  return { ticket: await getTicket(ticketId), messages: await listMessages(ticketId) };
+  const ticket = await getTicket(ticketId);
+  return { ticket: ticketView(ticket, await getOwner(ticket.accountId), "admin"), messages: await listMessages(ticketId) };
 }
 
-export async function listTicketsForAdmin(filter: { status?: Ticket["status"]; needsAgent?: boolean }) {
-  const conditions = [];
-  if (filter.status) conditions.push(eq(supportTickets.status, filter.status));
-  if (filter.needsAgent !== undefined) conditions.push(eq(supportTickets.needsAgent, filter.needsAgent));
-  return db
-    .select({ ticket: supportTickets, account: { id: users.id, name: users.name, phone: users.phone, role: users.role } })
-    .from(supportTickets)
-    .innerJoin(users, eq(users.id, supportTickets.accountId))
-    .where(and(...conditions))
-    .orderBy(desc(supportTickets.lastMessageAt));
+export type AdminTicketQuery = {
+  status?: TicketStatus;
+  role?: AccountRole;
+  category?: string;
+  q?: string;
+  needsAgent?: boolean;
+  page: number;
+  pageSize: number;
+};
+
+export async function listTicketsForAdmin(query: AdminTicketQuery) {
+  const conditions: SQL[] = [];
+  if (query.status) conditions.push(eq(supportTickets.status, query.status));
+  if (query.role) conditions.push(eq(users.role, query.role));
+  if (query.category) conditions.push(eq(supportTickets.category, query.category));
+  if (query.needsAgent !== undefined) conditions.push(eq(supportTickets.needsAgent, query.needsAgent));
+  if (query.q) {
+    const text = or(ilike(supportTickets.subject, `%${query.q}%`), ilike(users.name, `%${query.q}%`))!;
+    conditions.push(/^[0-9a-f-]{36}$/i.test(query.q) ? or(eq(supportTickets.id, query.q), text)! : text);
+  }
+  const where = and(...conditions);
+
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select({ ticket: supportTickets, account: { id: users.id, name: users.name, phone: users.phone, role: users.role } })
+      .from(supportTickets)
+      .innerJoin(users, eq(users.id, supportTickets.accountId))
+      .where(where)
+      .orderBy(desc(supportTickets.lastMessageAt))
+      .limit(query.pageSize)
+      .offset((query.page - 1) * query.pageSize),
+    db.select({ total: count() }).from(supportTickets).innerJoin(users, eq(users.id, supportTickets.accountId)).where(where),
+  ]);
+
+  return {
+    // Flat ticket fields for the admin Support screen, plus the original
+    // { ticket, account } pair this list returned first.
+    tickets: rows.map(({ ticket, account }) => ({ ...ticketView(ticket, account, "admin"), ticket, account })),
+    total,
+    page: query.page,
+    pageSize: query.pageSize,
+    hasMore: query.page * query.pageSize < total,
+  };
 }
 
 export async function addAgentMessage(adminId: string, ticketId: string, content: string) {
@@ -136,12 +232,21 @@ export async function addAgentMessage(adminId: string, ticketId: string, content
   return message;
 }
 
-export async function setTicketStatus(ticketId: string, status: Ticket["status"]) {
-  await getTicket(ticketId);
-  const [updated] = await db
+export type TicketUpdate = { status?: TicketStatus; priority?: TicketPriority; assigneeId?: string | null };
+
+// Returns the ticket before and after, for the audit log.
+export async function updateTicketAsAdmin(ticketId: string, update: TicketUpdate) {
+  const before = await getTicket(ticketId);
+  if (update.assigneeId) {
+    const [assignee] = await db.select({ role: users.role }).from(users).where(eq(users.id, update.assigneeId)).limit(1);
+    if (!assignee || (assignee.role !== "admin" && assignee.role !== "sub_admin")) {
+      throw new AppError(400, "assigneeId must be an admin");
+    }
+  }
+  const [after] = await db
     .update(supportTickets)
-    .set({ status, updatedAt: new Date() })
+    .set({ ...update, updatedAt: new Date() })
     .where(eq(supportTickets.id, ticketId))
     .returning();
-  return updated;
+  return { before, after: ticketView(after, await getOwner(after.accountId), "admin") };
 }

@@ -1,4 +1,4 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env } from "../config/env";
 
@@ -39,10 +39,33 @@ export async function generateUploadUrl(key: string, contentType: string): Promi
   return getSignedUrl(client, command, { expiresIn: UPLOAD_URL_EXPIRY_SECONDS });
 }
 
-export async function generateDownloadUrl(key: string): Promise<string> {
+export async function generateDownloadUrl(key: string, expiresInSeconds: number = DOWNLOAD_URL_EXPIRY_SECONDS): Promise<string> {
   const client = requireS3Client();
   const command = new GetObjectCommand({ Bucket: env.AWS_S3_BUCKET_NAME, Key: key });
-  return getSignedUrl(client, command, { expiresIn: DOWNLOAD_URL_EXPIRY_SECONDS });
+  return getSignedUrl(client, command, { expiresIn: expiresInSeconds });
+}
+
+// Size and type of an uploaded object, or null if nothing was uploaded under
+// that key. A presigned PUT can't cap the upload's size, so callers check it
+// here before using the object.
+export async function getObjectInfo(key: string): Promise<{ sizeBytes: number; contentType: string | null } | null> {
+  const client = requireS3Client();
+  try {
+    const head = await client.send(new HeadObjectCommand({ Bucket: env.AWS_S3_BUCKET_NAME, Key: key }));
+    return { sizeBytes: head.ContentLength ?? 0, contentType: head.ContentType ?? null };
+  } catch (err) {
+    if (err instanceof Error && (err.name === "NotFound" || err.name === "NoSuchKey")) return null;
+    throw err;
+  }
+}
+
+export async function deleteObject(key: string): Promise<void> {
+  await requireS3Client().send(new DeleteObjectCommand({ Bucket: env.AWS_S3_BUCKET_NAME, Key: key }));
+}
+
+export function getBucketName(): string {
+  requireS3Client();
+  return env.AWS_S3_BUCKET_NAME!;
 }
 
 // Gallery media is meant to be publicly viewable on a host's profile,

@@ -1,7 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { and, desc, eq, or } from "drizzle-orm";
 import { db } from "../../db/client";
 import { chatConversations, chatMessages, giftTransactions, gifts, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
+import { checkChatImage } from "../../lib/imageModeration";
+import { logger } from "../../lib/logger";
+import { deleteObject, generateDownloadUrl, generateUploadUrl, getObjectInfo } from "../../lib/s3";
+import { createReport } from "../moderation/moderation.service";
 import { areBlocked } from "../moderation/blocks.service";
 import { getUserById } from "../users/users.service";
 import { getHostEffectivePrices, notifyIfLevelledUp } from "../hosts/levels";
@@ -62,10 +67,11 @@ export function otherParticipantId(conversation: ChatConversation, viewerId: str
   return conversation.userId === viewerId ? conversation.hostId : conversation.userId;
 }
 
-export async function sendMessage(conversationId: string, senderId: string, content: string) {
+// mediaKey set = a photo message (content is then its optional caption).
+export async function sendMessage(conversationId: string, senderId: string, content: string, mediaKey: string | null = null) {
   const [message] = await db
     .insert(chatMessages)
-    .values({ conversationId, senderId, content })
+    .values({ conversationId, senderId, content, type: mediaKey ? "image" : "text", mediaKey })
     .returning();
   await db
     .update(chatConversations)
@@ -78,7 +84,8 @@ export async function sendMessage(conversationId: string, senderId: string, cont
 // commission→beans math and snapshot reasoning as gifts.service.ts's sendGift.
 // The message row and the money transfer commit together: a user with too
 // little balance gets a 402 and the message is never stored or delivered.
-export async function sendPaidUserMessage(conversation: ChatConversation, content: string) {
+// A photo (mediaKey) costs the same as a text message.
+export async function sendPaidUserMessage(conversation: ChatConversation, content: string, mediaKey: string | null = null) {
   const { messageRatePaise: price } = await getHostEffectivePrices(conversation.hostId);
   const commissionBasisPointsSnapshot = await getCurrentCommissionBasisPoints(conversation.hostId);
   const paisePerBeanSnapshot = await getCurrentPaisePerBean();
@@ -92,6 +99,8 @@ export async function sendPaidUserMessage(conversation: ChatConversation, conten
       .values({
         conversationId: conversation.id,
         senderId: conversation.userId,
+        type: mediaKey ? "image" : "text",
+        mediaKey,
         content,
         chargedPaise: price,
         commissionBasisPointsSnapshot,
@@ -119,6 +128,62 @@ export async function sendPaidUserMessage(conversation: ChatConversation, conten
   return { message, userBalanceAfterPaise: transfer.userBalanceAfter };
 }
 
+// Photos are private objects: every time a message is served it gets a fresh
+// signed URL, valid for an hour.
+const CHAT_MEDIA_URL_TTL_SECONDS = 60 * 60;
+
+export async function chatMediaUrl(message: { type: string; mediaKey: string | null }): Promise<string | null> {
+  if (message.type !== "image" || !message.mediaKey) return null;
+  return generateDownloadUrl(message.mediaKey, CHAT_MEDIA_URL_TTL_SECONDS);
+}
+
+// ---- Photos -----------------------------------------------------------------
+
+const CHAT_IMAGE_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+const CHAT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+// Step 1 of sending a photo: a presigned PUT for a key tied to this
+// conversation and this sender. Refused for anyone the sender couldn't message.
+export async function issueChatUploadUrl(senderId: string, senderRole: "user" | "host", recipientId: string, contentType: string) {
+  const extension = CHAT_IMAGE_TYPES[contentType];
+  if (!extension) throw new AppError(400, "Photos must be JPEG, PNG or WebP");
+  const conversation = await findOrCreateConversation(senderId, senderRole, recipientId);
+  const mediaKey = `chat/${conversation.id}/${senderId}/${randomUUID()}.${extension}`;
+  return { uploadUrl: await generateUploadUrl(mediaKey, contentType), mediaKey, expiresIn: 300 };
+}
+
+// Step 2, before the photo message is saved: the key must be one issued to
+// this sender for this conversation, the upload must exist, be a photo and
+// be at most 5 MB, and it must pass automated image moderation. A photo that
+// fails moderation is never delivered or charged, and is reported for review.
+export async function verifyChatImage(conversation: ChatConversation, senderId: string, senderRole: "user" | "host", mediaKey: string) {
+  if (!mediaKey.startsWith(`chat/${conversation.id}/${senderId}/`)) throw new AppError(400, "Invalid mediaKey");
+  const info = await getObjectInfo(mediaKey);
+  if (!info) throw new AppError(400, "The photo hasn't been uploaded yet");
+  if (info.sizeBytes > CHAT_IMAGE_MAX_BYTES) {
+    await deleteObject(mediaKey);
+    throw new AppError(413, "Photos can be at most 5 MB");
+  }
+  if (!info.contentType || !CHAT_IMAGE_TYPES[info.contentType]) throw new AppError(400, "Photos must be JPEG, PNG or WebP");
+
+  let check;
+  try {
+    check = await checkChatImage(mediaKey);
+  } catch (err) {
+    logger.error({ err, mediaKey }, "Image moderation failed — photo not sent");
+    throw new AppError(503, "Photos can't be checked right now — please try again");
+  }
+  if (check.checked && !check.allowed) {
+    await createReport(
+      senderId,
+      senderRole,
+      senderId,
+      `Automated: chat photo blocked by image moderation (${check.labels.join(", ")}). Object: ${mediaKey}`,
+    );
+    throw new AppError(422, "This photo can't be sent");
+  }
+}
+
 // Gift messages come back with the gift that was sent ({ id, name, iconUrl },
 // from the gift catalog via the gift transaction); text messages have gift: null.
 export async function listMessages(conversationId: string, page: number, pageSize: number) {
@@ -132,10 +197,15 @@ export async function listMessages(conversationId: string, page: number, pageSiz
     .orderBy(desc(chatMessages.createdAt))
     .limit(pageSize)
     .offset(offset);
-  return rows.map((r) => ({
-    ...r.message,
-    gift: r.message.type === "gift" && r.giftId ? { id: r.giftId, name: r.giftName, iconUrl: r.giftIconUrl } : null,
-  }));
+  const result = [];
+  for (const r of rows) {
+    result.push({
+      ...r.message,
+      gift: r.message.type === "gift" && r.giftId ? { id: r.giftId, name: r.giftName, iconUrl: r.giftIconUrl } : null,
+      mediaUrl: await chatMediaUrl(r.message),
+    });
+  }
+  return result;
 }
 
 export async function listConversations(viewerId: string) {

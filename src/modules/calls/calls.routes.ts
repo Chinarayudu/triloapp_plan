@@ -17,6 +17,7 @@ import {
   rejectCall,
   relayCallSignal,
 } from "./calls.service";
+import { getAppSettings } from "../settings/appSettings.service";
 import { submitCallMediaReport } from "./callMediaReports.service";
 import { submitRating } from "./ratings.service";
 
@@ -97,7 +98,8 @@ callsRouter.get("/calls/:id", requireAuth, async (req, res, next) => {
       throw new AppError(403, "Not your call");
     }
     const { callerName, hostName } = await getCallParticipantNames(call.userId, call.hostId);
-    res.json({ ...call, secureMode: true, callerName, hostName, durationQuality: callDurationQuality(call) });
+    const { callQuality } = await getAppSettings();
+    res.json({ ...call, secureMode: true, callerName, hostName, durationQuality: callDurationQuality(call, callQuality) });
   } catch (err) {
     next(err);
   }

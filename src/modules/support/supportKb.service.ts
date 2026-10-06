@@ -38,3 +38,9 @@ export async function updateArticle(id: string, input: Partial<ArticleInput>): P
   if (!article) throw new AppError(404, "Article not found");
   return article;
 }
+
+export async function deleteArticle(id: string): Promise<Article> {
+  const [article] = await db.delete(supportKbArticles).where(eq(supportKbArticles.id, id)).returning();
+  if (!article) throw new AppError(404, "Article not found");
+  return article;
+}

@@ -19,6 +19,7 @@ import {
   transferUserToHost,
 } from "../wallet/wallet.service";
 import { isOnline } from "../hosts/presence.store";
+import { AppSettings, getAppSettings } from "../settings/appSettings.service";
 import {
   CallMediaCredentials,
   chooseCallMedia,
@@ -69,20 +70,20 @@ export async function getCallById(callId: string): Promise<CallRow | undefined> 
 // getHostHistory).
 export type CallListFilter = "all" | "video" | "voice" | "missed";
 
-// Call length bands shown next to a finished call (business rule):
-// under 4 min = bad, 4–10 min = good, over 10 min = excellent.
-const GOOD_CALL_MIN_SECONDS = 4 * 60;
-const EXCELLENT_CALL_MIN_SECONDS = 10 * 60;
-
 export type CallDurationQuality = "bad" | "good" | "excellent";
 
-// null for a call that never connected (missed/rejected) or is still going —
-// there's no finished length to judge yet.
-export function callDurationQuality(call: { startedAt: Date | null; endedAt: Date | null }): CallDurationQuality | null {
+// Call length bands shown next to a finished call — admin-editable
+// (settings/appSettings.service.ts), by default bad under 4 min, good 4–10
+// min, excellent over 10 min. null for a call that never connected
+// (missed/rejected) or is still going: there's no finished length to judge yet.
+export function callDurationQuality(
+  call: { startedAt: Date | null; endedAt: Date | null },
+  bands: AppSettings["callQuality"],
+): CallDurationQuality | null {
   if (!call.startedAt || !call.endedAt) return null;
-  const seconds = (call.endedAt.getTime() - call.startedAt.getTime()) / 1000;
-  if (seconds > EXCELLENT_CALL_MIN_SECONDS) return "excellent";
-  if (seconds >= GOOD_CALL_MIN_SECONDS) return "good";
+  const seconds = Math.floor((call.endedAt.getTime() - call.startedAt.getTime()) / 1000);
+  if (seconds >= bands.excellentFromSeconds) return "excellent";
+  if (seconds >= bands.goodFromSeconds) return "good";
   return "bad";
 }
 
@@ -102,7 +103,7 @@ async function countCalls(where: ReturnType<typeof callListWhere>) {
 // response shape predates filters and is kept as-is for the User app.
 export async function listCallsForUser(userId: string, filter: CallListFilter, page: number, pageSize: number) {
   const where = callListWhere(calls.userId, userId, filter);
-  const [rows, total] = await Promise.all([
+  const [rows, total, settings] = await Promise.all([
     db
       .select()
       .from(calls)
@@ -111,9 +112,10 @@ export async function listCallsForUser(userId: string, filter: CallListFilter, p
       .limit(pageSize)
       .offset((page - 1) * pageSize),
     countCalls(where),
+    getAppSettings(),
   ]);
   return {
-    calls: rows.map((c) => ({ ...c, durationQuality: callDurationQuality(c) })),
+    calls: rows.map((c) => ({ ...c, durationQuality: callDurationQuality(c, settings.callQuality) })),
     total,
     page,
     pageSize,
@@ -127,7 +129,7 @@ export async function listCallsForUser(userId: string, filter: CallListFilter, p
 // rate — the same basis as the dashboard and daily report.
 export async function listCallsForHost(hostId: string, filter: CallListFilter, page: number, pageSize: number) {
   const where = callListWhere(calls.hostId, hostId, filter);
-  const [rows, total, [sums], paisePerBean] = await Promise.all([
+  const [rows, total, [sums], paisePerBean, settings] = await Promise.all([
     db
       .select({
         id: calls.id,
@@ -152,6 +154,7 @@ export async function listCallsForHost(hostId: string, filter: CallListFilter, p
     countCalls(where),
     db.select({ beans: sql<string>`coalesce(sum(${calls.totalBeans}), 0)` }).from(calls).where(where),
     getCurrentPaisePerBean(),
+    getAppSettings(),
   ]);
 
   const items = rows.map((c) => ({
@@ -159,7 +162,7 @@ export async function listCallsForHost(hostId: string, filter: CallListFilter, p
     callerName: c.callerName ?? "Unknown",
     durationSeconds: c.startedAt && c.endedAt ? Math.floor((c.endedAt.getTime() - c.startedAt.getTime()) / 1000) : 0,
     earnedPaise: c.totalBeans * paisePerBean,
-    durationQuality: callDurationQuality(c),
+    durationQuality: callDurationQuality(c, settings.callQuality),
   }));
   return {
     calls: items,
@@ -419,6 +422,52 @@ export async function endCall(callId: string, requesterId: string): Promise<Call
   emitToUser(call.userId, "call:ended", summary);
   emitToUser(call.hostId, "call:ended", summary);
 
+  return updated;
+}
+
+// Admin force-end (POST /admin/calls/:id/end) — the same transitions as a
+// hang-up (endCall above), with endReason "ended_by_admin". Billing is the
+// same as a hang-up too: every completed 10s tick has already been charged
+// and nothing more is. The status-guarded update means a hang-up, a billing
+// tick ending the call for low balance, or a lost connection landing at the
+// same moment wins cleanly instead of the call being ended twice.
+export async function endCallAsAdmin(callId: string): Promise<CallRow> {
+  const call = await getCallById(callId);
+  if (!call) throw new AppError(404, "Call not found");
+  if (!ACTIVE_STATUSES.includes(call.status)) throw new AppError(409, `Call already ${call.status}`);
+
+  let updated: CallRow | undefined;
+  if (call.status === "ringing") {
+    clearRingingTimeout(callId);
+    [updated] = await db
+      .update(calls)
+      .set({ status: "missed", endedAt: new Date(), endReason: "ended_by_admin", updatedAt: new Date() })
+      .where(and(eq(calls.id, callId), eq(calls.status, "ringing")))
+      .returning();
+  } else {
+    stopBillingInterval(callId);
+    [updated] = await db
+      .update(calls)
+      .set({ status: "completed", endedAt: new Date(), endReason: "ended_by_admin", updatedAt: new Date() })
+      .where(and(eq(calls.id, callId), eq(calls.status, "ongoing")))
+      .returning();
+    if (updated) {
+      broadcastBusy(call.hostId, false);
+      void closeCallChannelIfEnabled(channelNameFor(callId), updated.mediaProvider);
+      await checkCollusionSafely(call.hostId, call.userId);
+    }
+  }
+  if (!updated) throw new AppError(409, "Call already ended");
+
+  const summary = {
+    callId,
+    status: updated.status,
+    totalAmountPaise: updated.totalAmountPaise,
+    totalBeans: updated.totalBeans,
+    endReason: updated.endReason,
+  };
+  emitToUser(call.userId, "call:ended", summary);
+  emitToUser(call.hostId, "call:ended", summary);
   return updated;
 }
 

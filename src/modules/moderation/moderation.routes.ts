@@ -87,6 +87,8 @@ moderationRouter.get("/moderation/blocks", requireAuth, async (req, res, next) =
 const captureEventSchema = z.object({
   context: z.enum(["call", "chat", "live"]),
   contextId: z.string().uuid().optional(),
+  // Optional so older app builds (no type) keep working — those are always capture attempts.
+  type: z.enum(["SCREENSHOT_ATTEMPT", "SCREEN_RECORDING_SUSPECTED", "PAGE_HIDDEN", "DEVTOOLS_OPENED"]).optional(),
 });
 
 // BR-MOD-03 — the client calls this the moment it detects a screen
@@ -100,8 +102,8 @@ moderationRouter.post(
   validateBody(captureEventSchema),
   async (req, res, next) => {
     try {
-      const { context, contextId } = req.body as z.infer<typeof captureEventSchema>;
-      const result = await logCaptureEvent(req.user!.sub, context, contextId);
+      const { context, contextId, type } = req.body as z.infer<typeof captureEventSchema>;
+      const result = await logCaptureEvent(req.user!.sub, context, contextId, type);
       res.status(201).json(result);
     } catch (err) {
       next(err);
