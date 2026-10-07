@@ -100,3 +100,49 @@ describe("Support tickets: admin workflow", () => {
     expect((await request(app).delete(`/admin/support/kb/${created.body.id}`).set(bearer(moderator.accessToken))).status).toBe(404);
   });
 });
+
+describe("Support tickets: photo attachments", () => {
+  it("opens a ticket with a photo and sends photo-only messages, served as signed URLs", async () => {
+    const app = createApp();
+    const user = await registerAndLogin(app, "user");
+    const other = await registerAndLogin(app, "user");
+    const admin = await registerAndLoginAdmin("sub_admin", ["moderation"]);
+    const upload = async (token: string) => {
+      const issued = await request(app).post("/user/me/support/attachments/upload-url").set(bearer(token)).send({ contentType: "image/png" });
+      expect(issued.status).toBe(201);
+      const put = await fetch(issued.body.uploadUrl, { method: "PUT", headers: { "Content-Type": "image/png" }, body: Buffer.from("fake-png") });
+      expect(put.ok).toBe(true);
+      return issued.body.mediaKey as string;
+    };
+
+    const notAPhoto = await request(app).post("/user/me/support/attachments/upload-url").set(bearer(user.accessToken)).send({ contentType: "application/pdf" });
+    expect(notAPhoto.status).toBe(400);
+    const nothing = await request(app).post("/user/me/support/tickets").set(bearer(user.accessToken)).send({ subject: "Help", category: "payments" });
+    expect(nothing.status).toBe(400);
+
+    const firstKey = await upload(user.accessToken);
+    expect(firstKey).toMatch(new RegExp(`^support/${user.user.id}/[0-9a-f-]+\.png$`));
+    const created = await request(app)
+      .post("/user/me/support/tickets")
+      .set(bearer(user.accessToken))
+      .send({ subject: "Recharge failed", category: "payments", content: "", mediaKey: firstKey });
+    expect(created.status).toBe(201);
+    const ticketId = created.body.ticket.id as string;
+    expect(created.body.messages[0]).toMatchObject({ sender: "user", content: "", attachments: [{ type: "image", url: expect.stringContaining(firstKey) }] });
+
+    // Someone else's upload can't be attached.
+    const stolen = await request(app).post(`/user/me/support/tickets/${ticketId}/messages`).set(bearer(user.accessToken)).send({ mediaKey: await upload(other.accessToken) });
+    expect(stolen.status).toBe(400);
+
+    const secondKey = await upload(user.accessToken);
+    const photoOnly = await request(app).post(`/user/me/support/tickets/${ticketId}/messages`).set(bearer(user.accessToken)).send({ mediaKey: secondKey });
+    expect(photoOnly.status).toBe(201);
+    expect(photoOnly.body.attachments).toHaveLength(1);
+
+    // Staff see the photos too, and can open them.
+    const staffView = await request(app).get(`/admin/support/tickets/${ticketId}`).set(bearer(admin.accessToken));
+    const urls = staffView.body.messages.flatMap((m: { attachments: { url: string }[] }) => m.attachments.map((a) => a.url));
+    expect(urls).toHaveLength(2);
+    expect(await (await fetch(urls[0])).text()).toBe("fake-png");
+  });
+});

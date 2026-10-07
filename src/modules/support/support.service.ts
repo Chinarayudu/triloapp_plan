@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { and, asc, count, desc, eq, ilike, or, SQL } from "drizzle-orm";
 import { db } from "../../db/client";
 import { calls, supportMessages, supportTickets, users, withdrawalRequests } from "../../db/schema";
 import { AppError } from "../../lib/errors";
+import { deleteObject, generateDownloadUrl, generateUploadUrl, getObjectInfo } from "../../lib/s3";
 import { sendPushNotification } from "../../lib/push";
 import { emitToUser, isUserConnected } from "../../realtime/socket";
 
@@ -62,25 +64,61 @@ export async function listMessages(ticketId: string) {
     .leftJoin(users, eq(users.id, supportMessages.senderUserId))
     .where(eq(supportMessages.ticketId, ticketId))
     .orderBy(asc(supportMessages.createdAt));
-  return rows.map(({ message, senderUserName }) => ({
-    id: message.id,
-    sender: message.sender,
-    senderName: senderUserName ?? SENDER_FALLBACK_NAME[message.sender],
-    content: message.content,
-    // Support chat is text-only; kept for the apps' message shape.
-    attachments: [],
-    createdAt: message.createdAt,
-  }));
+  const messages = [];
+  for (const { message, senderUserName } of rows) {
+    messages.push({
+      id: message.id,
+      sender: message.sender,
+      senderName: senderUserName ?? SENDER_FALLBACK_NAME[message.sender],
+      content: message.content,
+      // At most one photo per message; a fresh signed URL every time it's served.
+      attachments: message.mediaKey
+        ? [{ type: "image" as const, url: await generateDownloadUrl(message.mediaKey, ATTACHMENT_URL_TTL_SECONDS) }]
+        : [],
+      createdAt: message.createdAt,
+    });
+  }
+  return messages;
 }
 
-async function addMessage(ticket: Ticket, sender: Sender, senderUserId: string | null, content: string) {
+// ---- Photo attachments ------------------------------------------------------
+// The same presign-then-send flow as chat photos: the app asks for an upload
+// URL, PUTs the photo to S3, then sends the message with the mediaKey.
+// Support photos only ever go to the support team, so they aren't run through
+// image moderation like chat photos are.
+
+const ATTACHMENT_URL_TTL_SECONDS = 60 * 60;
+const ATTACHMENT_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+const ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+
+export async function issueSupportUploadUrl(accountId: string, contentType: string) {
+  const extension = ATTACHMENT_TYPES[contentType];
+  if (!extension) throw new AppError(400, "Photos must be JPEG, PNG or WebP");
+  const mediaKey = `support/${accountId}/${randomUUID()}.${extension}`;
+  return { uploadUrl: await generateUploadUrl(mediaKey, contentType), mediaKey, expiresIn: 300 };
+}
+
+// The key must be one issued to this account, the upload must exist, be a
+// photo and be at most 5 MB.
+async function checkAttachment(accountId: string, mediaKey: string): Promise<void> {
+  if (!mediaKey.startsWith(`support/${accountId}/`)) throw new AppError(400, "Invalid mediaKey");
+  const info = await getObjectInfo(mediaKey);
+  if (!info) throw new AppError(400, "The photo hasn't been uploaded yet");
+  if (info.sizeBytes > ATTACHMENT_MAX_BYTES) {
+    await deleteObject(mediaKey);
+    throw new AppError(413, "Photos can be at most 5 MB");
+  }
+  if (!info.contentType || !ATTACHMENT_TYPES[info.contentType]) throw new AppError(400, "Photos must be JPEG, PNG or WebP");
+}
+
+async function addMessage(ticket: Ticket, sender: Sender, senderUserId: string | null, content: string, mediaKey: string | null = null) {
   const now = new Date();
   const fromOwner = sender === "host" || sender === "user";
   // The owner writing back puts the ticket in front of staff again — unless
   // someone is already working on it.
   const reopens = fromOwner && (ticket.status === "resolved" || ticket.status === "closed" || ticket.status === "waiting_on_customer");
   await db.transaction(async (tx) => {
-    await tx.insert(supportMessages).values({ ticketId: ticket.id, sender, senderUserId, content, createdAt: now });
+    await tx.insert(supportMessages).values({ ticketId: ticket.id, sender, senderUserId, content, mediaKey, createdAt: now });
     await tx
       .update(supportTickets)
       .set({
@@ -100,7 +138,7 @@ async function addMessage(ticket: Ticket, sender: Sender, senderUserId: string |
 async function notifyOwner(ticket: Ticket, message: Awaited<ReturnType<typeof addMessage>>, pushTitle: string) {
   emitToUser(ticket.accountId, "support:message", { ticketId: ticket.id, message });
   if (!(await isUserConnected(ticket.accountId))) {
-    void sendPushNotification(ticket.accountId, pushTitle, message.content.slice(0, 100));
+    void sendPushNotification(ticket.accountId, pushTitle, message.content.slice(0, 100) || "📷 Photo");
   }
 }
 
@@ -136,14 +174,16 @@ export async function createTicket(
   category: string,
   content: string,
   refs: TicketRefs,
+  mediaKey: string | null,
 ) {
   await checkRefsBelongTo(accountId, refs);
+  if (mediaKey) await checkAttachment(accountId, mediaKey);
   const ticketId = await db.transaction(async (tx) => {
     const [ticket] = await tx
       .insert(supportTickets)
       .values({ accountId, subject, category, refCallId: refs.callId ?? null, refWithdrawalId: refs.withdrawalId ?? null })
       .returning();
-    await tx.insert(supportMessages).values({ ticketId: ticket.id, sender: role, senderUserId: accountId, content });
+    await tx.insert(supportMessages).values({ ticketId: ticket.id, sender: role, senderUserId: accountId, content, mediaKey });
     return ticket.id;
   });
   return getOwnTicketWithMessages(accountId, ticketId);
@@ -154,8 +194,10 @@ export async function getOwnTicketWithMessages(accountId: string, ticketId: stri
   return { ticket: ticketView(ticket, await getOwner(accountId), "owner"), messages: await listMessages(ticketId) };
 }
 
-export async function addOwnerMessage(accountId: string, role: AccountRole, ticketId: string, content: string) {
-  return addMessage(await getOwnTicket(accountId, ticketId), role, accountId, content);
+export async function addOwnerMessage(accountId: string, role: AccountRole, ticketId: string, content: string, mediaKey: string | null) {
+  const ticket = await getOwnTicket(accountId, ticketId);
+  if (mediaKey) await checkAttachment(accountId, mediaKey);
+  return addMessage(ticket, role, accountId, content, mediaKey);
 }
 
 // ---- Support bot ------------------------------------------------------------

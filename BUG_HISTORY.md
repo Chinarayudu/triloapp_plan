@@ -20,6 +20,14 @@ Copy this for each new entry, filled in, added to the top of the log below.
 
 ## Log
 
+### [2026-10-06] Can't attach images when creating a support ticket
+
+**Symptom**: Users and hosts couldn't add a photo (e.g. a payment screenshot) when opening or replying to a support ticket.
+**Root cause**: Not a defect in existing code; the feature had never been built. Support messages were text-only (`attachments` was always `[]`), there was no upload endpoint for support, and neither app's support chat had a photo picker.
+**Affected files**: backend `src/db/schema.ts` + `drizzle/0032_support_attachments.sql` (`support_messages.media_key`), `src/modules/support/support.service.ts` (upload URL, attachment checks, `attachments` with signed URLs), `support.routes.ts` (`POST /me/support/attachments/upload-url`; `mediaKey` on create/reply, text optional with a photo), `supportBot.service.ts` (transcript notes an attached photo), `supportTickets.test.ts`; `user_app_dating/src/pages/Account.jsx` + `lib/api.js`, `dating_host_app/src/screens/account.jsx` + `api/index.js` (photo button, upload, inline photos); `dateingappadminpage/src/pages/Support.tsx` (photos shown to staff); Postman User/Host.
+**Fix**: Same presign-then-send flow as chat photos: the app shrinks the photo, gets an upload URL, PUTs it to S3, then sends the message with `mediaKey`. The backend checks the key belongs to the sender, the object exists, is an image and is at most 5 MB. No image moderation, since only staff see support photos.
+**Call sites checked**: `listMessages` feeds the owner thread, the admin thread, `support:message` and the bot. All now get `attachments`, and the bot's transcript stays non-empty for photo-only messages. `addMessage` is used by owner, agent and bot messages; agent and bot pass no photo, so they're unchanged. Admin reply still uses `contentSchema`, which is unchanged. Full backend suite and the Postman collections pass; all three apps build.
+
 ### [2026-10-04] Cashfree Payouts dashboard "Webhook test failed. The server responded with status code 401"
 
 **Symptom**: Adding `https://triloapp-plan.onrender.com/payments/cashfree/payout-webhook` in Cashfree Payouts → Developers → Webhooks fails the dashboard's test with `{"message":"Webhook test failed. The server responded with status code 401.","title":"REQUEST_INVALID"}`. The dashboard calls `.../cashgramuiapi/.../v1/payout/webhook/test` (`api-version: 2021-02-02`, `contentType: "JSON"`) and offers no V2 option.

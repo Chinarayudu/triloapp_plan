@@ -1212,6 +1212,9 @@ export const supportMessages = pgTable("support_messages", {
   // The host, user or admin who wrote it; null for bot messages.
   senderUserId: uuid("sender_user_id").references(() => users.id),
   content: text("content").notNull(),
+  // An attached photo (e.g. a payment screenshot): a private S3 key under
+  // support/<accountId>/. Served as a short-lived signed URL in `attachments`.
+  mediaKey: text("media_key"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

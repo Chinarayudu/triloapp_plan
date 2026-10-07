@@ -149,6 +149,16 @@
       "key": "supportTicketId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "supportUploadUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "supportMediaKey",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -2829,6 +2839,145 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Attach a Photo 1: Get Upload URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contentType\": \"image/jpeg\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/host/me/support/attachments/upload-url",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "support",
+                "attachments",
+                "upload-url"
+              ]
+            },
+            "description": "For a photo on a support message (e.g. a payment screenshot). image/jpeg, image/png or image/webp. Returns { uploadUrl (presigned PUT, 5 min), mediaKey, expiresIn: 300 }."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "var j = pm.response.json(); pm.collectionVariables.set(\"supportUploadUrl\", j.uploadUrl); pm.collectionVariables.set(\"supportMediaKey\", j.mediaKey);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Attach a Photo 2: Upload to S3",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/jpeg",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "postman-test-screenshot-bytes"
+            },
+            "url": {
+              "raw": "{{supportUploadUrl}}"
+            },
+            "description": "PUT the photo bytes to uploadUrl with the same Content-Type (at most 5 MB). The S3 bucket CORS must allow PUT from the app origins."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The presigned URL is a whole URL with its own query string, so set it directly.",
+                  "pm.request.url = pm.collectionVariables.get(\"supportUploadUrl\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Attach a Photo 3: Send Photo Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Screenshot of the payment\",\n  \"mediaKey\": \"{{supportMediaKey}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/host/me/support/tickets/{{supportTicketId}}/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "support",
+                "tickets",
+                "{{supportTicketId}}",
+                "messages"
+              ]
+            },
+            "description": "content is optional when mediaKey is set. The same mediaKey field works on POST /me/support/tickets (a ticket opened with a photo). Messages return attachments: [{ type: \"image\", url }] — a fresh signed URL valid ~1 h each time."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.test(\"has the photo\", function () { pm.expect(pm.response.json().attachments[0].type).to.eql(\"image\"); });"
                 ]
               }
             }

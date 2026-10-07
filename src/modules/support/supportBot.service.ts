@@ -299,7 +299,11 @@ export async function replyAsBot(ticketId: string): Promise<void> {
   ].join("\n");
   const messages: Anthropic.MessageParam[] = history.map((m, i) => {
     const fromOwner = m.sender === "host" || m.sender === "user";
-    const content = i === 0 ? `${ticketHeader}\n\n${m.content}` : m.content;
+    // The bot doesn't see photos; it's told one was attached so it can hand
+    // over when the photo matters (e.g. a payment screenshot).
+    const photoNote = m.attachments.length > 0 ? "[The person attached a photo. You can't see it; the support team can.]" : "";
+    const text = [m.content, photoNote].filter(Boolean).join("\n");
+    const content = i === 0 ? `${ticketHeader}\n\n${text}` : text;
     return { role: fromOwner ? "user" : "assistant", content };
   });
 

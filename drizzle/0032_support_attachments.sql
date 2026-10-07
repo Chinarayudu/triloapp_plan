@@ -1,0 +1,1 @@
+ALTER TABLE "support_messages" ADD COLUMN "media_key" text;

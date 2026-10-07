@@ -12,6 +12,7 @@ import {
   createTicket,
   getOwnTicketWithMessages,
   getTicketWithMessages,
+  issueSupportUploadUrl,
   listOwnTickets,
   listTicketsForAdmin,
   updateTicketAsAdmin,
@@ -42,21 +43,50 @@ supportRouter.get("/me/support/tickets", ...asAccount, async (req, res, next) =>
   }
 });
 
-const createTicketSchema = z.object({
-  subject: z.string().trim().min(1).max(120),
-  category: z.string().trim().min(1).max(50),
-  content: z.string().trim().min(1).max(2000),
-  // The call or withdrawal the ticket is about — must be the caller's own.
-  refs: z.object({ callId: z.string().uuid().nullish(), withdrawalId: z.string().uuid().nullish() }).optional(),
+// A message is text, a photo (mediaKey from POST /me/support/attachments/upload-url), or both.
+const mediaKeySchema = z.string().min(1).max(300).optional();
+const needsTextOrPhoto = (m: { content: string; mediaKey?: string }) => m.content.length > 0 || Boolean(m.mediaKey);
+const TEXT_OR_PHOTO = "A message needs text or a photo";
+
+const createTicketSchema = z
+  .object({
+    subject: z.string().trim().min(1).max(120),
+    category: z.string().trim().min(1).max(50),
+    content: z.string().trim().max(2000).default(""),
+    mediaKey: mediaKeySchema,
+    // The call or withdrawal the ticket is about — must be the caller's own.
+    refs: z.object({ callId: z.string().uuid().nullish(), withdrawalId: z.string().uuid().nullish() }).optional(),
+  })
+  .refine(needsTextOrPhoto, TEXT_OR_PHOTO);
+
+const ownerMessageSchema = z
+  .object({ content: z.string().trim().max(2000).default(""), mediaKey: mediaKeySchema })
+  .refine(needsTextOrPhoto, TEXT_OR_PHOTO);
+
+const uploadUrlSchema = z.object({ contentType: z.string().min(1).max(100) });
+
+// Step 1 of attaching a photo: a presigned PUT (5 minutes) for a key tied to the caller.
+supportRouter.post("/me/support/attachments/upload-url", ...asAccount, validateBody(uploadUrlSchema), async (req, res, next) => {
+  try {
+    const { contentType } = req.body as z.infer<typeof uploadUrlSchema>;
+    res.status(201).json(await issueSupportUploadUrl(req.user!.sub, contentType));
+  } catch (err) {
+    next(err);
+  }
 });
 
 supportRouter.post("/me/support/tickets", ...asAccount, validateBody(createTicketSchema), async (req, res, next) => {
   try {
-    const { subject, category, content, refs } = req.body as z.infer<typeof createTicketSchema>;
-    const created = await createTicket(req.user!.sub, req.user!.role as AccountRole, subject, category, content, {
-      callId: refs?.callId ?? undefined,
-      withdrawalId: refs?.withdrawalId ?? undefined,
-    });
+    const { subject, category, content, mediaKey, refs } = req.body as z.infer<typeof createTicketSchema>;
+    const created = await createTicket(
+      req.user!.sub,
+      req.user!.role as AccountRole,
+      subject,
+      category,
+      content,
+      { callId: refs?.callId ?? undefined, withdrawalId: refs?.withdrawalId ?? undefined },
+      mediaKey ?? null,
+    );
     scheduleBotReply(created.ticket.id);
     res.status(201).json(created);
   } catch (err) {
@@ -72,11 +102,11 @@ supportRouter.get("/me/support/tickets/:id", ...asAccount, async (req, res, next
   }
 });
 
-supportRouter.post("/me/support/tickets/:id/messages", ...asAccount, validateBody(contentSchema), async (req, res, next) => {
+supportRouter.post("/me/support/tickets/:id/messages", ...asAccount, validateBody(ownerMessageSchema), async (req, res, next) => {
   try {
     const ticketId = parseId(req.params.id, "ticket id");
-    const { content } = req.body as z.infer<typeof contentSchema>;
-    const message = await addOwnerMessage(req.user!.sub, req.user!.role as AccountRole, ticketId, content);
+    const { content, mediaKey } = req.body as z.infer<typeof ownerMessageSchema>;
+    const message = await addOwnerMessage(req.user!.sub, req.user!.role as AccountRole, ticketId, content, mediaKey ?? null);
     scheduleBotReply(ticketId);
     res.status(201).json(message);
   } catch (err) {
