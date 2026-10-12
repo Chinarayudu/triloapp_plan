@@ -10,6 +10,7 @@ import { callsRouter } from "./modules/calls/calls.routes";
 import { chatRouter } from "./modules/chat/chat.routes";
 import { giftsRouter } from "./modules/gifts/gifts.routes";
 import { hostsRouter } from "./modules/hosts/hosts.routes";
+import { hostRewardsAdminRouter, hostRewardsRouter } from "./modules/hosts/rewards.routes";
 import { liveRouter } from "./modules/live/live.routes";
 import { moderationRouter } from "./modules/moderation/moderation.routes";
 import { notificationsRouter } from "./modules/notifications/notifications.routes";
@@ -56,6 +57,7 @@ export function createApp(): Express {
   const perAppRouters = [
     usersRouter,
     hostsRouter,
+    hostRewardsRouter,
     walletRouter,
     vipRouter,
     earningsRouter,
@@ -76,6 +78,7 @@ export function createApp(): Express {
   app.use(adminRouter);
   app.use(supportAdminRouter);
   app.use(opsAdminRouter);
+  app.use(hostRewardsAdminRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

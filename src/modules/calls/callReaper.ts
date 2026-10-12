@@ -7,9 +7,10 @@ import { closeCallChannelIfEnabled } from "./callMedia.service";
 import { channelNameFor, checkCollusionSafely, RINGING_TIMEOUT_MS, TICK_INTERVAL_MS } from "./calls.service";
 import { clearRingingTimeout, stopBillingInterval } from "./callTimers";
 
-// BACKEND_PLAN.md §8 "Mid-call failure": billing-interval/ringing-timeout
-// state lives in-memory (callTimers.ts, single-instance-only by design) —
-// a process restart loses every one of those timers, and an "ongoing" call
+// BACKEND_PLAN.md §8 "Mid-call failure": without Redis, billing-interval/
+// ringing-timeout state lives in-memory (callTimers.ts) — a process restart
+// loses every one of those timers (with Redis they're BullMQ jobs, but a
+// broken job chain has the same effect), and an "ongoing" call
 // left with no live timer would otherwise bill forever (never — it just
 // sits there, stuck, until someone notices). This sweep is the backstop:
 // it never trusts in-memory timer state, only the DB row's own staleness,
@@ -31,7 +32,7 @@ export async function reapStaleCalls(): Promise<{ reapedRinging: number; reapedO
     .where(and(eq(calls.status, "ringing"), lt(calls.createdAt, new Date(now - STALE_RINGING_MS))));
 
   for (const call of staleRinging) {
-    clearRingingTimeout(call.id);
+    await clearRingingTimeout(call.id);
     const [updated] = await db
       .update(calls)
       .set({ status: "missed", endedAt: new Date(), endReason: "reaped_stale_ringing", updatedAt: new Date() })
@@ -47,7 +48,7 @@ export async function reapStaleCalls(): Promise<{ reapedRinging: number; reapedO
     .where(and(eq(calls.status, "ongoing"), lt(calls.updatedAt, new Date(now - STALE_ONGOING_MS))));
 
   for (const call of staleOngoing) {
-    stopBillingInterval(call.id);
+    await stopBillingInterval(call.id);
     const [updated] = await db
       .update(calls)
       .set({ status: "completed", endedAt: new Date(), endReason: "reaped_stale_ongoing", updatedAt: new Date() })

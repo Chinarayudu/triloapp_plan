@@ -55,13 +55,9 @@ describe("Fraud: multi-accounting (BACKEND_PLAN.md §8)", () => {
   });
 });
 
-async function setupOnlineHost(app: Express, ratePerMinutePaise: number) {
+// A new host is Level 1: ₹30/min video (hosts/levels.ts) — hosts can't set their own rate.
+async function setupOnlineHost(app: Express) {
   const host = await registerAndLogin(app, "host");
-  const profile = await request(app)
-    .patch("/host/me/host-profile")
-    .set("Authorization", `Bearer ${host.accessToken}`)
-    .send({ ratePerMinutePaise });
-  expect(profile.status).toBe(200); // a rate above the host level cap is a 400 — fail here, not later
   await request(app).patch("/host/me/presence").set("Authorization", `Bearer ${host.accessToken}`).send({ isOnline: true });
   return host;
 }
@@ -75,7 +71,7 @@ async function completeCall(app: Express, userToken: string, hostToken: string, 
 describe("Fraud: call collusion (BACKEND_PLAN.md §8)", () => {
   it("flags a host once most of their completed calls are with the same single user", async () => {
     const app = createApp();
-    const host = await setupOnlineHost(app, 100);
+    const host = await setupOnlineHost(app);
     const user = await registerAndLogin(app, "user");
     await fundUserWallet(app, user.accessToken, 100000);
 
@@ -96,7 +92,7 @@ describe("Fraud: call collusion (BACKEND_PLAN.md §8)", () => {
 
   it("doesn't flag a host whose calls are spread across different users", async () => {
     const app = createApp();
-    const host = await setupOnlineHost(app, 100);
+    const host = await setupOnlineHost(app);
 
     for (let i = 0; i < 5; i++) {
       const user = await registerAndLogin(app, "user");

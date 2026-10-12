@@ -19,7 +19,8 @@ export type LedgerReferenceType =
   | "withdrawal"
   | "refund"
   | "adjustment"
-  | "dev_credit";
+  | "dev_credit"
+  | "host_reward";
 
 // hostId is optional — when given, an active host-specific override
 // (BR-COM-03) wins over the global rate; every host with no negotiated

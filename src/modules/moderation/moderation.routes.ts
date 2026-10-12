@@ -17,8 +17,8 @@ export const moderationRouter = Router();
 // moderation queue or the automated capture-event escalation, so a burst
 // of junk reports is more than just noise, it can trigger a false
 // escalation.
-const reportLimiter = perUserRateLimit(60_000, 20);
-const captureEventLimiter = perUserRateLimit(60_000, 20);
+const reportLimiter = perUserRateLimit("report", 60_000, 20);
+const captureEventLimiter = perUserRateLimit("capture-event", 60_000, 20);
 
 const reportSchema = z.object({
   targetType: z.enum(["user", "host", "chat_message", "call", "live_broadcast"]),

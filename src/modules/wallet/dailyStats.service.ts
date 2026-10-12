@@ -12,9 +12,10 @@ import { getCurrentPaisePerBean } from "./wallet.service";
 // todayEarningsPaise: the host's own share (beans credited to their wallet,
 // i.e. after commission) converted at the current paise-per-bean rate.
 
-const OTHER_EARNING_LABELS: Record<"chat_message" | "adjustment", string> = {
+const OTHER_EARNING_LABELS: Record<"chat_message" | "adjustment" | "host_reward", string> = {
   chat_message: "Chat messages",
   adjustment: "Adjustment",
+  host_reward: "Rewards",
 };
 
 type Interval = { start: number; end: number; open: boolean };
@@ -25,7 +26,7 @@ async function fetchHostActivity(hostId: string, from: Date, to: Date) {
   const overlaps = (startCol: PgColumn, endCol: PgColumn) =>
     and(lt(startCol, to), or(isNull(endCol), gt(endCol, from)));
 
-  const [sessions, answeredCalls, receivedCalls, broadcasts, callCredits, giftCredits, otherCredits, paisePerBean] =
+  const [sessions, answeredCalls, receivedCalls, broadcasts, callCredits, giftCredits, otherCredits, paisePerBean, hostOnline] =
     await Promise.all([
       db
         .select({ startedAt: hostOnlineSessions.startedAt, endedAt: hostOnlineSessions.endedAt })
@@ -56,11 +57,12 @@ async function fetchHostActivity(hostId: string, from: Date, to: Date) {
       db
         .select({ beans: ledgerEntries.amount, createdAt: ledgerEntries.createdAt, referenceType: ledgerEntries.referenceType })
         .from(ledgerEntries)
-        .where(and(hostCreditsBetween(hostId, from, to), inArray(ledgerEntries.referenceType, ["chat_message", "adjustment"]))),
+        .where(and(hostCreditsBetween(hostId, from, to), inArray(ledgerEntries.referenceType, ["chat_message", "adjustment", "host_reward"]))),
       getCurrentPaisePerBean(),
+      isOnline(hostId),
     ]);
 
-  return { sessions, answeredCalls, receivedCalls, broadcasts, callCredits, giftCredits, otherCredits, paisePerBean };
+  return { sessions, answeredCalls, receivedCalls, broadcasts, callCredits, giftCredits, otherCredits, paisePerBean, hostOnline };
 }
 
 function hostCreditsBetween(hostId: string, from: Date, to: Date) {
@@ -154,7 +156,7 @@ function summarizeDay(hostId: string, activity: HostActivity, date: string, dayS
 
   const dayOtherCredits = activity.otherCredits.filter((e) => isWithin(e.createdAt, dayStart, dayEnd));
   const otherItems: Array<{ label: string; amountPaise: number }> = [];
-  for (const referenceType of ["chat_message", "adjustment"] as const) {
+  for (const referenceType of ["chat_message", "adjustment", "host_reward"] as const) {
     const beans = dayOtherCredits.filter((e) => e.referenceType === referenceType).reduce((sum, e) => sum + e.beans, 0);
     if (beans > 0) otherItems.push({ label: OTHER_EARNING_LABELS[referenceType], amountPaise: toPaise(beans) });
   }
@@ -172,7 +174,7 @@ function summarizeDay(hostId: string, activity: HostActivity, date: string, dayS
     date,
     online: {
       totalSeconds: Math.floor(totalOnlineMs / 1000),
-      isOnlineNow: isOnline(hostId) || inCallOrLiveNow,
+      isOnlineNow: activity.hostOnline || inCallOrLiveNow,
       asOf: asOf.toISOString(),
       sessions: intervals.map((i) => ({
         start: new Date(i.start).toISOString(),

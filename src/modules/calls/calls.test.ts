@@ -5,13 +5,9 @@ import { createApp } from "../../app";
 import { fundUserWallet, registerAndLogin } from "../../test/helpers";
 import { expireRinging, runBillingTick } from "./calls.service";
 
-async function setupOnlineHost(app: Express, ratePerMinutePaise: number) {
+// A new host is Level 1: ₹30/min video (hosts/levels.ts) — hosts can't set their own rate.
+async function setupOnlineHost(app: Express) {
   const host = await registerAndLogin(app, "host");
-  const profile = await request(app)
-    .patch("/host/me/host-profile")
-    .set("Authorization", `Bearer ${host.accessToken}`)
-    .send({ ratePerMinutePaise });
-  expect(profile.status).toBe(200); // a rate above the host level cap is a 400 — fail here, not later
   await request(app)
     .patch("/host/me/presence")
     .set("Authorization", `Bearer ${host.accessToken}`)
@@ -22,7 +18,7 @@ async function setupOnlineHost(app: Express, ratePerMinutePaise: number) {
 describe("Calls: happy path with full billing reconciliation", () => {
   it("initiates, accepts, bills three ticks correctly, and ends with matching totals", async () => {
     const app = createApp();
-    const host = await setupOnlineHost(app, 3000); // ₹30/min (Level 1 video max) -> 500 paise per 10s tick
+    const host = await setupOnlineHost(app); // ₹30/min (Level 1 video) -> 500 paise per 10s tick
     const user = await registerAndLogin(app, "user");
     await fundUserWallet(app, user.accessToken, 10000);
 
@@ -72,7 +68,7 @@ describe("Calls: happy path with full billing reconciliation", () => {
 describe("Calls: gating and concurrency", () => {
   it("rejects initiating a call when the user has insufficient balance", async () => {
     const app = createApp();
-    const host = await setupOnlineHost(app, 3000);
+    const host = await setupOnlineHost(app);
     const user = await registerAndLogin(app, "user"); // unfunded
 
     const res = await request(app)
@@ -85,10 +81,6 @@ describe("Calls: gating and concurrency", () => {
   it("rejects initiating a call to a host who is not online", async () => {
     const app = createApp();
     const host = await registerAndLogin(app, "host");
-    await request(app)
-      .patch("/host/me/host-profile")
-      .set("Authorization", `Bearer ${host.accessToken}`)
-      .send({ ratePerMinutePaise: 3000 });
     // presence never toggled on
 
     const user = await registerAndLogin(app, "user");
@@ -104,8 +96,8 @@ describe("Calls: gating and concurrency", () => {
 
   it("blocks a second concurrent call from the same user", async () => {
     const app = createApp();
-    const host1 = await setupOnlineHost(app, 3000);
-    const host2 = await setupOnlineHost(app, 3000);
+    const host1 = await setupOnlineHost(app);
+    const host2 = await setupOnlineHost(app);
     const user = await registerAndLogin(app, "user");
     await fundUserWallet(app, user.accessToken, 10000);
 
@@ -125,7 +117,7 @@ describe("Calls: gating and concurrency", () => {
 
   it("blocks a call to a host who is already on another call", async () => {
     const app = createApp();
-    const host = await setupOnlineHost(app, 3000);
+    const host = await setupOnlineHost(app);
     const user1 = await registerAndLogin(app, "user");
     const user2 = await registerAndLogin(app, "user");
     await fundUserWallet(app, user1.accessToken, 10000);
@@ -149,7 +141,7 @@ describe("Calls: gating and concurrency", () => {
 describe("Calls: reject and ringing timeout", () => {
   it("lets the host reject a ringing call", async () => {
     const app = createApp();
-    const host = await setupOnlineHost(app, 3000);
+    const host = await setupOnlineHost(app);
     const user = await registerAndLogin(app, "user");
     await fundUserWallet(app, user.accessToken, 10000);
 
@@ -171,7 +163,7 @@ describe("Calls: reject and ringing timeout", () => {
 
   it("marks a call missed when the ringing timeout fires before the host answers", async () => {
     const app = createApp();
-    const host = await setupOnlineHost(app, 3000);
+    const host = await setupOnlineHost(app);
     const user = await registerAndLogin(app, "user");
     await fundUserWallet(app, user.accessToken, 10000);
 
@@ -201,11 +193,11 @@ describe("Calls: reject and ringing timeout", () => {
 describe("Calls: mid-call low balance", () => {
   it("warns then auto-ends the call when the wallet can no longer cover a full tick", async () => {
     const app = createApp();
-    // ₹6/min -> pre-call gate needs >= 600 paise (1 minute), tick cost = 100 paise/10s.
-    // 650 paise covers exactly 6 ticks (600) with 50 left over — the 7th tick can't be covered.
-    const host = await setupOnlineHost(app, 600);
+    // ₹30/min -> pre-call gate needs >= 3000 paise (1 minute), tick cost = 500 paise/10s.
+    // 3250 paise covers exactly 6 ticks (3000) with 250 left over — the 7th tick can't be covered.
+    const host = await setupOnlineHost(app);
     const user = await registerAndLogin(app, "user");
-    await fundUserWallet(app, user.accessToken, 650);
+    await fundUserWallet(app, user.accessToken, 3250);
 
     const initiate = await request(app)
       .post("/user/calls")
@@ -221,7 +213,7 @@ describe("Calls: mid-call low balance", () => {
 
     const midCall = await request(app).get(`/user/calls/${callId}`).set("Authorization", `Bearer ${user.accessToken}`);
     expect(midCall.body.status).toBe("ongoing");
-    expect(midCall.body.totalAmountPaise).toBe(600);
+    expect(midCall.body.totalAmountPaise).toBe(3000);
 
     const seventhTick = await runBillingTick(callId);
     expect(seventhTick.billed).toBe(false);
@@ -229,9 +221,9 @@ describe("Calls: mid-call low balance", () => {
     const ended = await request(app).get(`/user/calls/${callId}`).set("Authorization", `Bearer ${user.accessToken}`);
     expect(ended.body.status).toBe("completed");
     expect(ended.body.endReason).toBe("insufficient_balance");
-    expect(ended.body.totalAmountPaise).toBe(600); // unchanged — the 7th tick never billed
+    expect(ended.body.totalAmountPaise).toBe(3000); // unchanged — the 7th tick never billed
 
     const wallet = await request(app).get("/user/wallet").set("Authorization", `Bearer ${user.accessToken}`);
-    expect(wallet.body.balancePaise).toBe(50); // 650 - 600, the uncoverable remainder is left alone
+    expect(wallet.body.balancePaise).toBe(250); // 3250 - 3000, the uncoverable remainder is left alone
   });
 });

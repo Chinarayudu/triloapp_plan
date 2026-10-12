@@ -12,7 +12,7 @@ import { getHostRatingSummary } from "../calls/ratings.service";
 import { addGalleryItem, deleteOwnGalleryItem, listGalleryItems } from "../hosts/gallery.service";
 import { getHostStats, hostingIdFor } from "../hosts/hosts.service";
 import { getOrCreateReferralCode, listReferrals } from "../hosts/referrals.service";
-import { getHostLevelPrices, getHostLevelSummary } from "../hosts/levels";
+import { getHostLevelSummary, MAX_HOST_LEVEL, setHostPriceLevel } from "../hosts/levels";
 import {
   addPayoutMethod,
   deletePayoutMethod,
@@ -169,11 +169,15 @@ const interestList = z.array(z.string().trim().min(1).max(50)).max(20).optional(
 const updateHostProfileSchema = z.object({
   bio: z.string().max(500).optional(),
   gallery: z.array(z.string().url()).max(20).optional(),
-  // Capped at the host's level maximum (hosts/levels.ts); null = "charge my
-  // level's price", which then rises automatically on every level-up.
-  ratePerMinutePaise: z.number().int().positive().nullable().optional(),
-  voiceRatePerMinutePaise: z.number().int().positive().nullable().optional(),
-  messageRatePaise: z.number().int().positive().nullable().optional(),
+  // Voice, video and message prices all come from one level (hosts/levels.ts):
+  // any level up to the one the host has unlocked. null = "my unlocked level",
+  // which then rises automatically on every level-up.
+  priceLevel: z.number().int().min(1).max(MAX_HOST_LEVEL).nullable().optional(),
+  // Hosts can't type in their own rates any more — refused with a clear
+  // message rather than silently ignored, so an app still sending them notices.
+  ratePerMinutePaise: z.never({ message: "Rates can't be set directly; pick a priceLevel instead" }).optional(),
+  voiceRatePerMinutePaise: z.never({ message: "Rates can't be set directly; pick a priceLevel instead" }).optional(),
+  messageRatePaise: z.never({ message: "Rates can't be set directly; pick a priceLevel instead" }).optional(),
   privateLiveRatePerMinutePaise: z.number().int().positive().optional(),
   autoAcceptCalls: z.boolean().optional(),
   voiceCallsOnlyAfterMidnight: z.boolean().optional(),
@@ -205,18 +209,9 @@ usersRouter.patch(
   validateBody(updateHostProfileSchema),
   async (req, res, next) => {
     try {
-      const { interests, ...updates } = req.body as z.infer<typeof updateHostProfileSchema>;
-      const { level, max } = await getHostLevelPrices(req.user!.sub);
-      const capped: Array<[number | null | undefined, number, string]> = [
-        [updates.ratePerMinutePaise, max.videoRatePerMinutePaise, "Video rate"],
-        [updates.voiceRatePerMinutePaise, max.voiceRatePerMinutePaise, "Voice rate"],
-        [updates.messageRatePaise, max.messageRatePaise, "Message price"],
-      ];
-      for (const [value, cap, label] of capped) {
-        if (value != null && value > cap) {
-          throw new AppError(400, `${label} can't exceed your Level ${level} maximum of ₹${cap / 100}`);
-        }
-      }
+      const { interests, priceLevel, ...updates } =
+        req.body as z.infer<typeof updateHostProfileSchema>;
+      if (priceLevel !== undefined) await setHostPriceLevel(req.user!.sub, priceLevel);
       const [updated] = await db
         .update(hostProfiles)
         .set({ ...updates, ...interests, updatedAt: new Date() })

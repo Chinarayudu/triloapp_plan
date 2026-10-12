@@ -522,7 +522,7 @@
           }
         },
         {
-          "name": "Update Host Profile — Bio, Gallery, Rates, Toggles",
+          "name": "Update Host Profile — Bio, Price Level, Toggles",
           "request": {
             "method": "PATCH",
             "header": [
@@ -539,7 +539,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"bio\": \"Late night chats, music and good vibes\",\n  \"ratePerMinutePaise\": 2400,\n  \"voiceRatePerMinutePaise\": 1200,\n  \"messageRatePaise\": 500,\n  \"privateLiveRatePerMinutePaise\": 3000,\n  \"autoAcceptCalls\": true,\n  \"voiceCallsOnlyAfterMidnight\": false\n}"
+              "raw": "{\n  \"bio\": \"Late night chats, music and good vibes\",\n  \"priceLevel\": null,\n  \"privateLiveRatePerMinutePaise\": 3000,\n  \"autoAcceptCalls\": true,\n  \"voiceCallsOnlyAfterMidnight\": false\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/host/me/host-profile",
@@ -552,7 +552,7 @@
                 "host-profile"
               ]
             },
-            "description": "Rate Settings screen's \"Save rates\" action — video/voice per-minute rates, per-message price, private-live rate (all paise) plus the two availability toggles. Video/voice/message are capped at the host's level maximum (see Get My Level) — above it is a 400. Send null for any of those three to charge the level price, which then rises automatically on level-up. A host who never sets a rate charges the level price (Level 1: ₹30 video, ₹20 voice, ₹5 message)."
+            "description": "Rate Settings screen's save action. Hosts can't type in rates: voice, video and message prices all come from one level (see Get My Level). priceLevel = any level from 1 up to the host's unlocked level (above it is a 400); null = always charge my unlocked level, so prices rise automatically on level-up (the default for a new host). Sending ratePerMinutePaise / voiceRatePerMinutePaise / messageRatePaise is a 400. privateLiveRatePerMinutePaise and the two availability toggles are unchanged."
           }
         },
         {
@@ -563,11 +563,14 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 with level info', function () {",
+                  "pm.test('200 with level info and the price-level picker', function () {",
                   "  pm.response.to.have.status(200);",
                   "  const b = pm.response.json();",
                   "  pm.expect(b.level).to.be.within(1, 20);",
                   "  pm.expect(b.levels).to.have.length(20);",
+                  "  pm.expect(b.pricedLevel).to.be.within(1, b.level);",
+                  "  pm.expect(b.levels.filter(l => l.selected)).to.have.length(1);",
+                  "  pm.expect(b.levels.filter(l => l.unlocked)).to.have.length(b.level);",
                   "});"
                 ]
               }
@@ -593,8 +596,146 @@
                 "level"
               ]
             },
-            "description": "Level screen. Returns { level, maxLevel: 20, lifetimeEarnedBeans, beansPerLevel: 100000, beansToNextLevel (null at 20), maxPrices, currentPrices, nextLevelMaxPrices (null at 20), levels: [{ level, requiredLifetimeBeans, voiceRatePerMinutePaise, videoRatePerMinutePaise, messageRatePaise }] }. Levels rise automatically every 1,00,000 lifetime-earned beans (withdrawals never lower it); each level adds ₹20 to all three max prices. Also pushed live as the host:level-up socket event."
+            "description": "Level screen. Returns { level, maxLevel: 20, lifetimeEarnedBeans, beansPerLevel: 100000, beansToNextLevel (null at 20), maxPrices, currentPrices, nextLevelMaxPrices (null at 20), levels: [{ level, requiredLifetimeBeans, voiceRatePerMinutePaise, videoRatePerMinutePaise, messageRatePaise }] }. Levels rise automatically every 1,00,000 lifetime-earned beans (withdrawals never lower it); each level adds ₹20 to all three max prices. Also pushed live as the host:level-up socket event. Price-level picker: levels[] has unlocked (selectable) and selected (charged now) per level; priceLevel is the host's pick (null = follow the unlocked level) and pricedLevel the level actually charged."
           }
+        },
+        {
+          "name": "Pick Price Level (Rate Settings)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/me/host-profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "host-profile"
+              ]
+            },
+            "description": "Pick the level whose prices to charge — any level up to the unlocked one. { priceLevel: null } goes back to following the unlocked level.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"priceLevel\": 1\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('price level saved', function () { pm.expect(pm.response.json().priceLevel).to.eql(1); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Typed-in Rate Is Refused",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/me/host-profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "host-profile"
+              ]
+            },
+            "description": "Rates can't be set directly any more — 400 telling the app to send priceLevel.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ratePerMinutePaise\": 2400\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('points at priceLevel', function () { pm.expect(pm.response.json().error).to.include('priceLevel'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Follow Unlocked Level Again",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/me/host-profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "host-profile"
+              ]
+            },
+            "description": "Back to the default: charge the unlocked level's prices, rising on level-up.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"priceLevel\": null\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('follows the level', function () { pm.expect(pm.response.json().priceLevel).to.eql(null); });"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Update Beauty Settings",
@@ -2374,6 +2515,102 @@
             },
             "description": "History screen's \"All\" tab — merged calls/gifts/live feed. type can also be calls|gifts|live."
           }
+        }
+      ]
+    },
+    {
+      "name": "Rewards (Daily / Weekly Wins)",
+      "description": "Home screen's Daily Wins / Weekly Wins sheets. Hosts are ranked by beans earned from calls, gifts and paid messages in the India-time day / Monday–Sunday week; when the period closes the backend credits each rank's reward to the winner's bean balance and sends a host_reward notification.",
+      "item": [
+        {
+          "name": "Get My Rewards (Daily + Weekly)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/me/rewards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "rewards"
+              ]
+            },
+            "description": "{ daily, weekly }, each: { enabled, periodStart, periodEnd, minQualifyingBeans, tiers: [{ rank, rewardBeans }], totalRewardBeans, myBeans, myRank (null until qualified), myRewardBeans (what this host would win if the period ended now), beansToQualify }."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('both periods', function () {",
+                  "  const b = pm.response.json();",
+                  "  for (const p of [b.daily, b.weekly]) {",
+                  "    pm.expect(p).to.have.keys('enabled', 'periodStart', 'periodEnd', 'minQualifyingBeans', 'tiers', 'totalRewardBeans', 'myBeans', 'myRank', 'myRewardBeans', 'beansToQualify');",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "My Reward History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{hostAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/host/me/rewards/history?page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "host",
+                "me",
+                "rewards",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Past wins, newest first: { payouts: [{ id, period, periodStart, periodEnd, rank, beansEarned, rewardBeans, paidAt }], page, pageSize }."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('payouts array', function () { pm.expect(pm.response.json().payouts).to.be.an('array'); });"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

@@ -131,7 +131,7 @@ export async function getAccountDetailForAdmin(accountId: string, expectedRole: 
   return {
     user,
     hostProfile,
-    isOnline: user.role === "host" ? isOnline(accountId) : undefined,
+    isOnline: user.role === "host" ? await isOnline(accountId) : undefined,
     activity: await getRecentActivity(accountId, 20),
     reportsAgainstAccount,
   };

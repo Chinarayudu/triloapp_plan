@@ -21,7 +21,7 @@ export const giftsRouter = Router();
 
 // Bounds gift-send spam (BACKEND_PLAN.md §8 "Rate limiting", Phase 11) —
 // generous relative to any real gifting session.
-const sendGiftLimiter = perUserRateLimit(60_000, 30);
+const sendGiftLimiter = perUserRateLimit("send-gift", 60_000, 30);
 
 giftsRouter.get("/gifts", requireAuth, async (_req, res, next) => {
   try {

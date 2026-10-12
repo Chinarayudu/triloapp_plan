@@ -1,30 +1,29 @@
+import { randomUUID } from "node:crypto";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../app";
 import { registerAndLogin } from "../../test/helpers";
 
 describe("Host discovery + presence (REST)", () => {
-  it("lists a newly-created host once their rate is set", async () => {
+  it("lists a newly-created host at their level's price", async () => {
     const app = createApp();
     const { accessToken, user } = await registerAndLogin(app, "host");
-    // rate=1 + sort=rate_asc guarantees this host sorts to (near) the very
-    // front regardless of how many host rows past test runs have left in
-    // the shared dev DB — pageSize alone isn't reliable against that
-    // accumulation (see BUG_HISTORY.md workflow: not a product bug, a
-    // known tradeoff pending a dedicated test DB branch).
+    // A language no other host has, searched for with q, finds this host
+    // however many host rows earlier test runs left in the test DB.
+    const language = `Lang-${randomUUID()}`;
     await request(app)
       .patch("/host/me/host-profile")
       .set("Authorization", `Bearer ${accessToken}`)
-      .send({ ratePerMinutePaise: 1 });
+      .send({ languages: [language] });
 
     const res = await request(app)
-      .get("/host/hosts?pageSize=50&sort=rate_asc")
+      .get(`/host/hosts?q=${language}`)
       .set("Authorization", `Bearer ${accessToken}`);
 
     expect(res.status).toBe(200);
     const found = res.body.hosts.find((h: { id: string }) => h.id === user.id);
     expect(found).toBeTruthy();
-    expect(found.ratePerMinutePaise).toBe(1);
+    expect(found.ratePerMinutePaise).toBe(3000); // Level 1 video
     expect(found.isOnline).toBe(false);
   });
 

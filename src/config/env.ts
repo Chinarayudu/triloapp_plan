@@ -130,6 +130,18 @@ const envSchema = z.object({
   // Unset = the bot never replies, even when switched on in admin; tickets
   // simply wait for a person, as before the bot existed.
   ANTHROPIC_API_KEY: z.string().optional(),
+  // Optional (lib/redis.ts). Set it before running more than one backend
+  // instance: presence, call timers, rate limits, Socket.IO fan-out and the
+  // support bot lock then live in Redis. Unset = all of that stays in memory,
+  // which is only correct for a single instance.
+  // An empty value (as in .env.example) counts as unset.
+  REDIS_URL: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z
+      .string()
+      .regex(/^rediss?:\/\//, "REDIS_URL must start with redis:// or rediss://")
+      .optional(),
+  ),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -17,9 +17,11 @@ export async function sweepOnlineSessions(now: Date = new Date()): Promise<void>
   const open = await db.select().from(hostOnlineSessions).where(isNull(hostOnlineSessions.endedAt));
 
   for (const session of open) {
-    // presence.store.ts is in-memory, so after a restart every host reads as
-    // offline here — close at the last moment they were actually seen.
-    if (!isOnline(session.hostId)) {
+    // Without Redis, presence is in memory, so after a restart every host
+    // reads as offline here — close at the last moment they were actually
+    // seen. With Redis it survives the restart, and a host whose connection
+    // died with the old process is closed by the grace check below.
+    if (!(await isOnline(session.hostId))) {
       await closeOpenSessions(session.hostId, session.lastSeenAt);
       continue;
     }

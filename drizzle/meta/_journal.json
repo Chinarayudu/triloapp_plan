@@ -232,6 +232,13 @@
       "when": 1791299011585,
       "tag": "0032_support_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1791786854190,
+      "tag": "0033_host_rewards_price_level",
+      "breakpoints": true
     }
   ]
 }

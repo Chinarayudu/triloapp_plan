@@ -231,7 +231,7 @@ export async function initiateCall(
     ? Math.round((baseRatePerMinutePaise * (10_000 - (await getVipCallDiscountBasisPoints()))) / 10_000)
     : baseRatePerMinutePaise;
 
-  if (!isOnline(hostId)) {
+  if (!(await isOnline(hostId))) {
     throw new AppError(409, "Host is not online");
   }
   if (await getActiveCallForHost(hostId)) {
@@ -267,7 +267,7 @@ export async function initiateCall(
     })
     .returning();
 
-  scheduleRingingTimeout(call.id, () => void expireRinging(call.id), RINGING_TIMEOUT_MS);
+  await scheduleRingingTimeout(call.id, () => void expireRinging(call.id), RINGING_TIMEOUT_MS);
 
   emitToUser(hostId, "call:incoming", {
     callId: call.id,
@@ -299,7 +299,7 @@ export async function acceptCall(
   if (call.hostId !== hostId) throw new AppError(403, "Not your call");
   if (call.status !== "ringing") throw new AppError(409, `Call is ${call.status}, cannot accept`);
 
-  clearRingingTimeout(callId);
+  await clearRingingTimeout(callId);
 
   const [updated] = await db
     .update(calls)
@@ -307,7 +307,7 @@ export async function acceptCall(
     .where(eq(calls.id, callId))
     .returning();
 
-  startBillingInterval(callId, () => void runBillingTick(callId), env.CALL_SCHEDULER_INTERVAL_MS);
+  await startBillingInterval(callId, () => void runBillingTick(callId), env.CALL_SCHEDULER_INTERVAL_MS);
 
   const channelName = channelNameFor(callId);
   emitToUser(call.userId, "call:accepted", { callId, channelName });
@@ -376,7 +376,7 @@ export async function rejectCall(callId: string, hostId: string): Promise<CallRo
   if (call.hostId !== hostId) throw new AppError(403, "Not your call");
   if (call.status !== "ringing") throw new AppError(409, `Call is ${call.status}, cannot reject`);
 
-  clearRingingTimeout(callId);
+  await clearRingingTimeout(callId);
 
   const [updated] = await db
     .update(calls)
@@ -397,7 +397,7 @@ export async function endCall(callId: string, requesterId: string): Promise<Call
 
   let updated: CallRow;
   if (call.status === "ringing") {
-    clearRingingTimeout(callId);
+    await clearRingingTimeout(callId);
     [updated] = await db
       .update(calls)
       .set({ status: "missed", endedAt: new Date(), endReason: "cancelled_by_caller", updatedAt: new Date() })
@@ -406,7 +406,7 @@ export async function endCall(callId: string, requesterId: string): Promise<Call
     const caller = await getUserById(call.userId);
     await createNotification(call.hostId, "call_missed", "Missed call", `You missed a call from ${caller?.name ?? "a user"}`);
   } else {
-    stopBillingInterval(callId);
+    await stopBillingInterval(callId);
     const endReason = requesterId === call.hostId ? "ended_by_host" : "ended_by_user";
     [updated] = await db
       .update(calls)
@@ -438,14 +438,14 @@ export async function endCallAsAdmin(callId: string): Promise<CallRow> {
 
   let updated: CallRow | undefined;
   if (call.status === "ringing") {
-    clearRingingTimeout(callId);
+    await clearRingingTimeout(callId);
     [updated] = await db
       .update(calls)
       .set({ status: "missed", endedAt: new Date(), endReason: "ended_by_admin", updatedAt: new Date() })
       .where(and(eq(calls.id, callId), eq(calls.status, "ringing")))
       .returning();
   } else {
-    stopBillingInterval(callId);
+    await stopBillingInterval(callId);
     [updated] = await db
       .update(calls)
       .set({ status: "completed", endedAt: new Date(), endReason: "ended_by_admin", updatedAt: new Date() })
@@ -493,7 +493,7 @@ export async function expireRinging(callId: string): Promise<void> {
 }
 
 async function endCallForInsufficientBalance(call: CallRow): Promise<void> {
-  stopBillingInterval(call.id);
+  await stopBillingInterval(call.id);
   const [updated] = await db
     .update(calls)
     .set({ status: "completed", endedAt: new Date(), endReason: "insufficient_balance", updatedAt: new Date() })
@@ -526,7 +526,7 @@ export async function endCallForLostConnection(accountId: string): Promise<CallR
     .limit(1);
   if (!call) return null;
 
-  stopBillingInterval(call.id);
+  await stopBillingInterval(call.id);
   // Guarded on status so a hang-up landing at the same moment wins cleanly
   // instead of the call being ended twice.
   const [updated] = await db
@@ -564,21 +564,21 @@ export async function runBillingTick(callId: string): Promise<{ billed: boolean 
   // read/write the same call row produce a duplicate idempotency key, not
   // graceful behavior. Skipping this cycle is the safe degradation; the
   // next one picks up normally.
-  if (!tryStartTick(callId)) {
+  if (!(await tryStartTick(callId))) {
     return { billed: false };
   }
 
   try {
     return await runBillingTickInner(callId);
   } finally {
-    clearTickInProgress(callId);
+    await clearTickInProgress(callId);
   }
 }
 
 async function runBillingTickInner(callId: string): Promise<{ billed: boolean }> {
   const call = await getCallById(callId);
   if (!call || call.status !== "ongoing") {
-    stopBillingInterval(callId);
+    await stopBillingInterval(callId);
     return { billed: false };
   }
 

@@ -93,6 +93,7 @@ Each requirement is labeled `BR-<module>-<num>` for traceability.
 - **BR-DIS-02**: Users shall see a list of currently available hosts, each showing their per-minute rate, and shall be able to filter/sort that list (e.g., by availability, price, rating).
 - **BR-DIS-03**: Each host's per-minute rate shall be set by the host (within any bounds Admin chooses to enforce) and shall be clearly shown to the User before a call begins.
   - **Amended (2026-09-24, host levels)**: the bound is the host's **level**. Every host starts at Level 1 (voice ₹20/min, video ₹30/min, message ₹5) and goes up one level per 1,00,000 lifetime-earned beans, to a maximum of Level 20; each level adds ₹20 to all three prices. A level's prices are the host's **maximum** — a host may set a lower rate; a host who hasn't set one charges exactly the level price, so it rises automatically on level-up. Levels never go down (withdrawals don't lower lifetime earnings). Hosts that existed before this change also start at Level 1.
+  - **Amended (2026-10-12, price levels)**: a host no longer types in rates. They choose any level up to the one they've unlocked and charge exactly that level's voice, video and message prices; by default they charge their unlocked level's prices, which rise on level-up.
 
 ### 5.4 Video calling & billing
 

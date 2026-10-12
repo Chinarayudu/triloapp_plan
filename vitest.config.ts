@@ -60,6 +60,12 @@ export default defineConfig({
       CASHFREE_PG_SECRET_KEY: "",
       CASHFREE_PAYOUT_CLIENT_ID: "",
       CASHFREE_PAYOUT_CLIENT_SECRET: "",
+      // In-memory presence/timers/rate limits/locks by default, even if .env
+      // has a REDIS_URL. Run with TEST_REDIS_URL=redis://... to run the suite
+      // in Redis mode instead (lib/redis.ts).
+      REDIS_URL: process.env.TEST_REDIS_URL ?? "",
     },
+    // Redis mode only: resets rate-limit counts between tests (see the file).
+    setupFiles: ["src/test/redisSetup.ts"],
   },
 });

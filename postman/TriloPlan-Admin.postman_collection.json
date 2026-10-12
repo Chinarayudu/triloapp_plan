@@ -3723,6 +3723,266 @@
           ]
         }
       ]
+    },
+    {
+      "name": "Host Rewards (Daily / Weekly Wins)",
+      "description": "Reward tables for the Host app's Daily Wins / Weekly Wins (finance permission). Ranked by beans earned from calls, gifts and paid messages in the India-time day / Monday–Sunday week. When a period closes the backend credits each rank's reward through the ledger — once, even with several servers. Every save is a new audited version; no config = rewards off.",
+      "item": [
+        {
+          "name": "1. Get Reward Config",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/host-rewards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "host-rewards"
+              ]
+            },
+            "description": "{ daily, weekly }, each { id, enabled, minQualifyingBeans, tiers: [{ rank, rewardBeans }] } (id null = never configured, rewards off)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Save Weekly Rewards",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/host-rewards/weekly",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "host-rewards",
+                "weekly"
+              ]
+            },
+            "description": "Replaces the weekly table from now on. tiers must be ranks 1, 2, 3… in order with no gaps (422 otherwise); enabled with no tiers is 422. The period running now is paid under whatever config is in force when it closes.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"minQualifyingBeans\": 10000,\n  \"tiers\": [\n    {\n      \"rank\": 1,\n      \"rewardBeans\": 1500000\n    },\n    {\n      \"rank\": 2,\n      \"rewardBeans\": 750000\n    },\n    {\n      \"rank\": 3,\n      \"rewardBeans\": 400000\n    },\n    {\n      \"rank\": 4,\n      \"rewardBeans\": 250000\n    },\n    {\n      \"rank\": 5,\n      \"rewardBeans\": 200000\n    }\n  ],\n  \"reason\": \"Weekly wins launch\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Save Daily Rewards",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/host-rewards/daily",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "host-rewards",
+                "daily"
+              ]
+            },
+            "description": "Same shape as weekly.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"minQualifyingBeans\": 2000,\n  \"tiers\": [\n    {\n      \"rank\": 1,\n      \"rewardBeans\": 50000\n    },\n    {\n      \"rank\": 2,\n      \"rewardBeans\": 25000\n    },\n    {\n      \"rank\": 3,\n      \"rewardBeans\": 10000\n    }\n  ],\n  \"reason\": \"Daily wins launch\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Rank Gap Is Refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/host-rewards/daily",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "host-rewards",
+                "daily"
+              ]
+            },
+            "description": "Ranks must start at 1 with no gaps.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"minQualifyingBeans\": 0,\n  \"tiers\": [\n    {\n      \"rank\": 2,\n      \"rewardBeans\": 100\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422', function () { pm.response.to.have.status(422); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Live Weekly Standings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/host-rewards/weekly/standings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "host-rewards",
+                "weekly",
+                "standings"
+              ]
+            },
+            "description": "Who would win if this week ended now: { period, periodStart, periodEnd, config, standings: [{ rank, hostId, name, phone, beans, rewardBeans }] } (qualifying hosts only, at least the top 50)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Settled Weeks & Payouts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/host-rewards/weekly/settlements?page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "host-rewards",
+                "weekly",
+                "settlements"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Closed periods newest first: { settlements: [{ id, period, periodStart, periodEnd, configId (null = rewards were off), settledAt, payouts: [{ hostId, name, rank, beansEarned, rewardBeans }] }], page, pageSize }."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ]
 }

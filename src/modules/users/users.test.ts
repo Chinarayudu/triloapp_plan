@@ -35,16 +35,22 @@ describe("Profile endpoints", () => {
     expect(res.status).toBe(403);
   });
 
-  it("updates bio/rate for a HOST role", async () => {
+  it("updates bio for a HOST role, and refuses a typed-in rate", async () => {
     const app = createApp();
     const { accessToken } = await registerAndLogin(app, "host");
     const res = await request(app)
       .patch("/host/me/host-profile")
       .set("Authorization", `Bearer ${accessToken}`)
-      .send({ bio: "Hi there", ratePerMinutePaise: 2500 }); // under the Level 1 video max of ₹30
+      .send({ bio: "Hi there" });
     expect(res.status).toBe(200);
     expect(res.body.bio).toBe("Hi there");
-    expect(res.body.ratePerMinutePaise).toBe(2500);
+
+    const rate = await request(app)
+      .patch("/host/me/host-profile")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ ratePerMinutePaise: 2500 });
+    expect(rate.status).toBe(400);
+    expect(rate.body.error).toMatch(/priceLevel/);
   });
 
   const beautySettings = {

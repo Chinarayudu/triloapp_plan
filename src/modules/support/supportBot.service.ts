@@ -6,6 +6,7 @@ import { db } from "../../db/client";
 import { rechargeTxns, supportBotConfigs, users, withdrawalSlabs } from "../../db/schema";
 import { writeAuditLog } from "../../lib/auditLog";
 import { logger } from "../../lib/logger";
+import { getRedis, redisEnabled } from "../../lib/redis";
 import { listCallsForHost, listCallsForUser } from "../calls/calls.service";
 import { listActiveGifts } from "../gifts/gifts.service";
 import { getLatestSubmission } from "../users/kyc.service";
@@ -375,11 +376,27 @@ export async function replyAsBot(ticketId: string): Promise<void> {
   await addBotMessage(await getTicket(ticketId), reply || HANDOFF_TEXT);
 }
 
-// One bot run per ticket at a time (in-memory, single instance — same tradeoff
-// as calls/callTimers.ts). A message arriving mid-run queues one more run, so
-// two quick messages get one answer covering both, not two overlapping ones.
+// One bot run per ticket at a time. A message arriving mid-run queues one
+// more run, so two quick messages get one answer covering both, not two
+// overlapping ones. With Redis (lib/redis.ts) the run/rerun marks are shared
+// by every instance; without it they live in this process's memory.
 const runningTickets = new Set<string>();
 const rerunTickets = new Set<string>();
+// Only there so a crashed instance's mark expires; a run takes seconds.
+const BOT_RUN_LOCK_MS = 5 * 60_000;
+// Atomically: take the run lock (returns 1), or if a run already holds it,
+// ask that run to go once more (returns 0).
+const START_OR_QUEUE_SCRIPT = `
+if redis.call("SET", KEYS[1], "1", "PX", ARGV[1], "NX") then return 1 end
+redis.call("SET", KEYS[2], "1", "PX", ARGV[1])
+return 0`;
+// Atomically: if another message asked for a rerun, consume that request and
+// keep the lock (returns 1); otherwise release the lock (returns 0). Done as
+// one step so a message landing between "no rerun?" and "release" isn't lost.
+const FINISH_OR_RERUN_SCRIPT = `
+if redis.call("DEL", KEYS[2]) == 1 then return 1 end
+redis.call("DEL", KEYS[1])
+return 0`;
 
 async function replyAsBotSafely(ticketId: string): Promise<void> {
   try {
@@ -395,6 +412,10 @@ async function replyAsBotSafely(ticketId: string): Promise<void> {
 }
 
 export function scheduleBotReply(ticketId: string): void {
+  if (redisEnabled()) {
+    void runBotWithRedisLock(ticketId).catch((err) => logger.error({ err, ticketId }, "Support bot scheduling failed"));
+    return;
+  }
   if (runningTickets.has(ticketId)) {
     rerunTickets.add(ticketId);
     return;
@@ -410,4 +431,16 @@ export function scheduleBotReply(ticketId: string): void {
       runningTickets.delete(ticketId);
     }
   })();
+}
+
+async function runBotWithRedisLock(ticketId: string): Promise<void> {
+  const redis = getRedis();
+  const lockKey = `support-bot-run:${ticketId}`;
+  const rerunKey = `support-bot-rerun:${ticketId}`;
+  if ((await redis.eval(START_OR_QUEUE_SCRIPT, 2, lockKey, rerunKey, BOT_RUN_LOCK_MS)) !== 1) return;
+  let rerun = true;
+  while (rerun) {
+    await replyAsBotSafely(ticketId);
+    rerun = (await redis.eval(FINISH_OR_RERUN_SCRIPT, 2, lockKey, rerunKey)) === 1;
+  }
 }

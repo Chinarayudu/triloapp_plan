@@ -1,8 +1,10 @@
 import type { Server as HttpServer } from "node:http";
+import { createAdapter } from "@socket.io/redis-adapter";
 import { Server as SocketIOServer } from "socket.io";
 import { env } from "../config/env";
 import { verifyAccessToken } from "../lib/jwt";
 import { logger } from "../lib/logger";
+import { newRedisConnection, redisEnabled } from "../lib/redis";
 import { endCallForLostConnection } from "../modules/calls/calls.service";
 import { markHostOffline } from "../modules/hosts/onlineSessions.service";
 import { isOnline as isHostMarkedOnline } from "../modules/hosts/presence.store";
@@ -15,6 +17,9 @@ let io: SocketIOServer | undefined;
 
 export function createSocketServer(httpServer: HttpServer): SocketIOServer {
   io = new SocketIOServer(httpServer, { cors: { origin: "*" } });
+  // With Redis, every emit/room join/fetchSockets reaches sockets connected
+  // to any instance, not just this one. Pub and sub need their own connections.
+  if (redisEnabled()) io.adapter(createAdapter(newRedisConnection(), newRedisConnection()));
 
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
@@ -53,7 +58,7 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
     // ("Host is not online") instead of that silent no-op.
     socket.on("disconnect", async () => {
       logger.debug({ userId }, "socket disconnected");
-      if (isHostMarkedOnline(userId) && !(await isUserConnected(userId))) {
+      if ((await isHostMarkedOnline(userId)) && !(await isUserConnected(userId))) {
         await markHostOffline(userId).catch((err) => logger.error({ err, userId }, "Closing online session on disconnect failed"));
         broadcastPresence(userId, false);
       }

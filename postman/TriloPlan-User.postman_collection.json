@@ -710,7 +710,7 @@
           ]
         },
         {
-          "name": "3. Set Host Rate + Profile Details",
+          "name": "3. Set Host Profile Details",
           "request": {
             "method": "PATCH",
             "header": [
@@ -727,7 +727,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"ratePerMinutePaise\": 2400,\n  \"bio\": \"Classical-meets-contemporary dancer.\",\n  \"languages\": [\"Hindi\", \"English\"],\n  \"talksAboutTags\": [\"Dance\", \"Bollywood music\", \"Mumbai food\"],\n  \"hobbies\": [\"Classical dance practice\", \"Cooking on weekends\"],\n  \"sports\": [\"Badminton\", \"Cycling\"]\n}"
+              "raw": "{\n  \"bio\": \"Classical-meets-contemporary dancer.\",\n  \"languages\": [\n    \"Hindi\",\n    \"English\"\n  ],\n  \"talksAboutTags\": [\n    \"Dance\",\n    \"Bollywood music\",\n    \"Mumbai food\"\n  ],\n  \"hobbies\": [\n    \"Classical dance practice\",\n    \"Cooking on weekends\"\n  ],\n  \"sports\": [\n    \"Badminton\",\n    \"Cycling\"\n  ]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/user/me/host-profile",

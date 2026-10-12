@@ -26,7 +26,7 @@ export const callsRouter = Router();
 // Bounds runaway call-initiation abuse (spam-ringing a host, or hammering
 // the pre-call balance check) — generous enough to never bother a real
 // user (BACKEND_PLAN.md §8 "Rate limiting", Phase 11).
-const initiateCallLimiter = perUserRateLimit(60_000, 10);
+const initiateCallLimiter = perUserRateLimit("initiate-call", 60_000, 10);
 
 const initiateSchema = z.object({ hostId: z.string().uuid(), type: z.enum(["video", "voice"]).default("video") });
 const callIdSchema = z.string().uuid();
@@ -140,7 +140,7 @@ callsRouter.post("/calls/:id/end", requireAuth, async (req, res, next) => {
 
 // A few dozen messages per call at most (hello, offer/answer, ICE candidates,
 // plus an occasional ICE restart) — this only stops a runaway client loop.
-const signalLimiter = perUserRateLimit(60_000, 300);
+const signalLimiter = perUserRateLimit("call-signal", 60_000, 300);
 
 // Standard WebRTC setup messages. Bounded in size so this can't be used to
 // push arbitrary payloads through our socket to the other participant.

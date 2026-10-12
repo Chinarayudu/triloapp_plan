@@ -1,5 +1,6 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
+import { rateLimitStore } from "../../middleware/rateLimit";
 import { z } from "zod";
 import { AppError } from "../../lib/errors";
 import { requireAuth } from "../../middleware/auth";
@@ -48,7 +49,7 @@ const refreshSchema = z.object({ refreshToken: z.string().min(1) });
 // createAdminAuthRouter's email+password login below.
 export function createOtpAuthRouter(): Router {
   const router = Router();
-  const otpRequestLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5 });
+  const otpRequestLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, store: rateLimitStore("otp-request") });
 
   router.post("/otp/request", otpRequestLimiter, validateBody(phoneSchema), async (req, res, next) => {
     try {
@@ -154,7 +155,7 @@ export function createAdminAuthRouter(): Router {
   // Separate budget from OTP requests, and generous-but-bounded against
   // password-guessing (BACKEND_PLAN.md §8 "Rate limiting") — keyed by IP
   // since there's no authenticated identity yet at this point.
-  const adminLoginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
+  const adminLoginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, store: rateLimitStore("admin-login") });
 
   // Deliberately does not distinguish "no such email" from "wrong password"
   // in its error (same generic message either way) so this can't be used to

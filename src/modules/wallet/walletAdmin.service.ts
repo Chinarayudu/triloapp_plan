@@ -25,6 +25,7 @@ const TRANSACTION_TYPE: Record<LedgerReferenceType, WalletTransactionType> = {
   // Host-wallet-only types; listed so the map is complete.
   commission: "adjustment",
   withdrawal: "adjustment",
+  host_reward: "adjustment",
 };
 
 async function requireUserAccount(userId: string) {

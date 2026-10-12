@@ -137,6 +137,11 @@ export const hostProfiles = pgTable("host_profiles", {
   // above, null means "charge my level's price" and a set value is capped at
   // the level's price (hosts/levels.ts).
   messageRatePaise: integer("message_rate_paise"),
+  // The three free-form rates above are no longer read (kept so no data is
+  // destroyed): a host now picks a price level instead (hosts/levels.ts).
+  // Null = "my unlocked level", which rises automatically on level-up; a set
+  // value is a level at or below the host's unlocked level.
+  priceLevel: integer("price_level"),
   autoAcceptCalls: boolean("auto_accept_calls").notNull().default(true),
   voiceCallsOnlyAfterMidnight: boolean("voice_calls_only_after_midnight").notNull().default(false),
   // Creator Profile screen's structured sections (User app design
@@ -396,6 +401,7 @@ export const ledgerReferenceTypeEnum = pgEnum("ledger_reference_type", [
   "refund",
   "adjustment",
   "dev_credit",
+  "host_reward",
 ]);
 
 // USER-role wallets only. Balance is real currency (paise), never an
@@ -1142,6 +1148,7 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "gift_received",
   "withdrawal_status",
   "call_missed",
+  "host_reward",
 ]);
 
 export const notifications = pgTable("notifications", {
@@ -1312,3 +1319,62 @@ export const appSettingsConfigs = pgTable("app_settings_configs", {
   effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ---------------------------------------------------------------------------
+// Host daily/weekly rewards (hosts/rewards.service.ts). Hosts are ranked by
+// beans earned in an India-time day or Monday–Sunday week; when the period
+// closes, each rank in the admin's table that has a qualifying host gets its
+// reward credited to their bean balance through the ledger.
+// ---------------------------------------------------------------------------
+
+export const hostRewardPeriodEnum = pgEnum("host_reward_period", ["daily", "weekly"]);
+
+// Versioned like the other configs. No row for a period = rewards off.
+export const hostRewardConfigs = pgTable("host_reward_configs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  period: hostRewardPeriodEnum("period").notNull(),
+  enabled: boolean("enabled").notNull(),
+  // A host must earn at least this many beans in the period to be ranked.
+  minQualifyingBeans: integer("min_qualifying_beans").notNull(),
+  // [{ rank: 1, rewardBeans: 1500000 }, ...] — ranks 1..n, no gaps.
+  tiers: jsonb("tiers").$type<Array<{ rank: number; rewardBeans: number }>>().notNull(),
+  effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// One row per closed period, written in the same transaction as its payouts —
+// so a period is settled exactly once, even with several instances sweeping.
+export const hostRewardSettlements = pgTable(
+  "host_reward_settlements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    period: hostRewardPeriodEnum("period").notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    // The config the period was settled under; null = rewards were off.
+    configId: uuid("config_id").references(() => hostRewardConfigs.id),
+    settledAt: timestamp("settled_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("host_reward_settlements_period_start_unique").on(t.period, t.periodStart)],
+);
+
+export const hostRewardPayouts = pgTable(
+  "host_reward_payouts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    settlementId: uuid("settlement_id")
+      .notNull()
+      .references(() => hostRewardSettlements.id),
+    hostId: uuid("host_id")
+      .notNull()
+      .references(() => users.id),
+    rank: integer("rank").notNull(),
+    beansEarned: integer("beans_earned").notNull(),
+    rewardBeans: integer("reward_beans").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("host_reward_payouts_settlement_rank_unique").on(t.settlementId, t.rank),
+    unique("host_reward_payouts_settlement_host_unique").on(t.settlementId, t.hostId),
+  ],
+);

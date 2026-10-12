@@ -512,7 +512,7 @@ export async function getDashboardStats(from?: Date, to?: Date) {
     activeUsers,
     totalHosts,
     activeHosts,
-    onlineHosts: listOnlineHostIds().length,
+    onlineHosts: (await listOnlineHostIds()).length,
     pendingKycCount,
     pendingWithdrawalCount,
     pendingReportCount,

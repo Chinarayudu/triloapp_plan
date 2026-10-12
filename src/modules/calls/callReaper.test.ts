@@ -8,13 +8,9 @@ import { calls } from "../../db/schema";
 import { fundUserWallet, registerAndLogin } from "../../test/helpers";
 import { reapStaleCalls } from "./callReaper";
 
-async function setupOnlineHost(app: Express, ratePerMinutePaise: number) {
+// A new host is Level 1: ₹30/min video (hosts/levels.ts) — hosts can't set their own rate.
+async function setupOnlineHost(app: Express) {
   const host = await registerAndLogin(app, "host");
-  const profile = await request(app)
-    .patch("/host/me/host-profile")
-    .set("Authorization", `Bearer ${host.accessToken}`)
-    .send({ ratePerMinutePaise });
-  expect(profile.status).toBe(200); // a rate above the host level cap is a 400 — fail here, not later
   await request(app).patch("/host/me/presence").set("Authorization", `Bearer ${host.accessToken}`).send({ isOnline: true });
   return host;
 }
@@ -33,7 +29,7 @@ async function backdateCallTimestamp(callId: string, column: "createdAt" | "upda
 describe("Call reaper (BACKEND_PLAN.md §8 'Mid-call failure')", () => {
   it("reaps a stale ringing call as missed", async () => {
     const app = createApp();
-    const host = await setupOnlineHost(app, 3000);
+    const host = await setupOnlineHost(app);
     const user = await registerAndLogin(app, "user");
     await fundUserWallet(app, user.accessToken, 10000);
 
@@ -55,7 +51,7 @@ describe("Call reaper (BACKEND_PLAN.md §8 'Mid-call failure')", () => {
 
   it("reaps a stale ongoing call as completed, keeping whatever billing already happened", async () => {
     const app = createApp();
-    const host = await setupOnlineHost(app, 3000);
+    const host = await setupOnlineHost(app);
     const user = await registerAndLogin(app, "user");
     await fundUserWallet(app, user.accessToken, 10000);
 
@@ -83,7 +79,7 @@ describe("Call reaper (BACKEND_PLAN.md §8 'Mid-call failure')", () => {
 
   it("leaves a fresh ringing/ongoing call alone", async () => {
     const app = createApp();
-    const host = await setupOnlineHost(app, 3000);
+    const host = await setupOnlineHost(app);
     const user = await registerAndLogin(app, "user");
     await fundUserWallet(app, user.accessToken, 10000);
 

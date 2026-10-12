@@ -28,10 +28,6 @@ describe("Calls: live notifications over socket", () => {
 
     const host = await registerAndLogin(app, "host");
     await request(app)
-      .patch("/host/me/host-profile")
-      .set("Authorization", `Bearer ${host.accessToken}`)
-      .send({ ratePerMinutePaise: 3000 });
-    await request(app)
       .patch("/host/me/presence")
       .set("Authorization", `Bearer ${host.accessToken}`)
       .send({ isOnline: true });

@@ -3,13 +3,13 @@ import { db } from "../../db/client";
 import { hostOnlineSessions } from "../../db/schema";
 import { setOffline, setOnline } from "./presence.store";
 
-// The in-memory presence flag (presence.store.ts) answers "is this host
+// The presence flag (presence.store.ts) answers "is this host
 // callable right now"; host_online_sessions is the durable history behind the
 // daily report. Every online/offline transition goes through these two
 // functions so the two can never disagree.
 
 export async function markHostOnline(hostId: string): Promise<void> {
-  setOnline(hostId);
+  await setOnline(hostId);
   const [open] = await db
     .select({ id: hostOnlineSessions.id })
     .from(hostOnlineSessions)
@@ -22,7 +22,7 @@ export async function markHostOnline(hostId: string): Promise<void> {
 }
 
 export async function markHostOffline(hostId: string, endedAt: Date = new Date()): Promise<void> {
-  setOffline(hostId);
+  await setOffline(hostId);
   await closeOpenSessions(hostId, endedAt);
 }
 

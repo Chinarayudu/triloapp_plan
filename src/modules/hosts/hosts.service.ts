@@ -3,8 +3,8 @@ import { db } from "../../db/client";
 import { calls, giftTransactions, hostFollows, hostGalleryItems, hostProfiles, hostWallets, users } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { getHostRatingSummaries, getHostRatingSummary, RatingSummary } from "../calls/ratings.service";
-import { effectiveRate, getHostEffectivePrices, levelForLifetimeBeans, pricesForLevel } from "./levels";
-import { listOnlineHostIds } from "./presence.store";
+import { getHostEffectivePrices, levelForLifetimeBeans, pricedLevel, pricesForLevel } from "./levels";
+import { isOnline, listOnlineHostIds } from "./presence.store";
 
 export type HostListSort = "rate_asc" | "rate_desc" | "online_first" | "rating_desc";
 
@@ -82,9 +82,7 @@ export async function listHosts(
       avatarUrl: users.avatarUrl,
       bio: hostProfiles.bio,
       gallery: hostProfiles.gallery,
-      ratePerMinutePaise: hostProfiles.ratePerMinutePaise,
-      voiceRatePerMinutePaise: hostProfiles.voiceRatePerMinutePaise,
-      messageRatePaise: hostProfiles.messageRatePaise,
+      priceLevel: hostProfiles.priceLevel,
       lifetimeEarnedBeans: hostWallets.lifetimeEarnedBeans,
     })
     .from(users)
@@ -92,7 +90,7 @@ export async function listHosts(
     .innerJoin(hostWallets, eq(hostWallets.hostId, users.id))
     .where(and(...conditions));
 
-  const onlineIds = new Set(listOnlineHostIds());
+  const onlineIds = new Set(await listOnlineHostIds());
   const [ratings, galleryCounts, busyIds] = await Promise.all([
     getHostRatingSummaries(rows.map((r) => r.id)),
     getGalleryCounts(rows.map((r) => r.id)),
@@ -100,7 +98,7 @@ export async function listHosts(
   ]);
   let hosts: HostListItem[] = rows.map((r) => {
     const level = levelForLifetimeBeans(r.lifetimeEarnedBeans);
-    const max = pricesForLevel(level);
+    const prices = pricesForLevel(pricedLevel(r.priceLevel, level));
     return {
       id: r.id,
       name: r.name,
@@ -108,9 +106,9 @@ export async function listHosts(
       bio: r.bio,
       gallery: r.gallery,
       level,
-      ratePerMinutePaise: effectiveRate(r.ratePerMinutePaise, max.videoRatePerMinutePaise),
-      voiceRatePerMinutePaise: effectiveRate(r.voiceRatePerMinutePaise, max.voiceRatePerMinutePaise),
-      messageRatePaise: effectiveRate(r.messageRatePaise, max.messageRatePaise),
+      ratePerMinutePaise: prices.videoRatePerMinutePaise,
+      voiceRatePerMinutePaise: prices.voiceRatePerMinutePaise,
+      messageRatePaise: prices.messageRatePaise,
       isOnline: onlineIds.has(r.id),
       isBusy: busyIds.has(r.id),
       rating: ratings.get(r.id) ?? { average: null, count: 0 },
@@ -186,7 +184,7 @@ export async function getHostDetail(hostId: string, viewerId: string) {
     voiceRatePerMinutePaise: prices.voiceRatePerMinutePaise,
     messageRatePaise: prices.messageRatePaise,
     age: ageFromDob(dob),
-    isOnline: listOnlineHostIds().includes(hostId),
+    isOnline: await isOnline(hostId),
     isBusy: (await getBusyHostIds([hostId])).has(hostId),
     rating: await getHostRatingSummary(hostId),
     followerCount: Number(followerCount),

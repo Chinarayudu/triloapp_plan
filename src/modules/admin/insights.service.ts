@@ -98,7 +98,7 @@ export async function getDashboardInsights(from: string, to: string, tz: string)
     callsByStatus,
     missedRate: decided > 0 ? Math.round((callsByStatus.missed / decided) * 1000) / 1000 : 0,
     avgCallSeconds,
-    hostsOnlineNow: listOnlineHostIds().length,
+    hostsOnlineNow: (await listOnlineHostIds()).length,
     topByOnlineTime: online.map((o) => ({
       hostId: o.hostId,
       hostName: hostNames.find((h) => h.id === o.hostId)?.name ?? "Unknown",

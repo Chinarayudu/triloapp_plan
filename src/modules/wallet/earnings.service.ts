@@ -33,8 +33,8 @@ function startOfHostMonth(): Date {
 // Host credits that are real earnings. Excludes "withdrawal" (beans handed
 // back when a withdrawal is rejected or its payout fails) — those are the
 // host's own money returning, and counting them made a reversed withdrawal
-// show up as that day's earnings.
-export const HOST_EARNING_REFERENCE_TYPES = ["call_billing", "gift", "chat_message", "adjustment"] as const;
+// show up as that day's earnings. Daily/weekly rewards (hosts/rewards.service.ts) count.
+export const HOST_EARNING_REFERENCE_TYPES = ["call_billing", "gift", "chat_message", "adjustment", "host_reward"] as const;
 
 async function sumHostLedgerCredits(hostId: string, since: Date, until?: Date): Promise<number> {
   const conditions = [
@@ -83,7 +83,7 @@ export async function getHostDashboard(hostId: string) {
     .limit(5);
 
   return {
-    isOnline: isOnline(hostId),
+    isOnline: await isOnline(hostId),
     todayBeans,
     todayEarningsPaise: todayBeans * paisePerBean,
     todayCallsCount: Number(todayCallsCount),
