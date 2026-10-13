@@ -3,7 +3,7 @@ import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../app";
 import { db } from "../../db/client";
-import { hostRewardConfigs, hostWallets, ledgerEntries, notifications, users } from "../../db/schema";
+import { hostGalleryItems, hostRewardConfigs, hostWallets, ledgerEntries, notifications, users } from "../../db/schema";
 import { fundUserWallet, registerAndLogin, registerAndLoginAdmin } from "../../test/helpers";
 import { reconcileHostWallets } from "../wallet/reconciliation.service";
 import { getHostRewards, periodContaining, settleRewardPeriod } from "./rewards.service";
@@ -158,7 +158,14 @@ describe("Host rewards", () => {
     await fundUserWallet(app, user.accessToken, 100_000);
     const leader = await registerAndLogin(app, "host");
     const chaser = await registerAndLogin(app, "host");
-    await db.update(users).set({ name: "Leader", avatarUrl: "https://example.com/leader.jpg" }).where(eq(users.id, leader.user.id));
+    // The leader has gallery photos (the newest one is their picture); the chaser only a profile photo.
+    await db.update(users).set({ name: "Leader", avatarUrl: "https://example.com/leader-avatar.jpg" }).where(eq(users.id, leader.user.id));
+    await db.insert(hostGalleryItems).values([
+      { hostId: leader.user.id, mediaType: "photo", url: "https://example.com/leader-old.jpg", createdAt: new Date(Date.now() - 60_000) },
+      { hostId: leader.user.id, mediaType: "photo", url: "https://example.com/leader-new.jpg" },
+      { hostId: leader.user.id, mediaType: "video", url: "https://example.com/leader.mp4", durationSeconds: 10, createdAt: new Date(Date.now() + 60_000) },
+    ]);
+    await db.update(users).set({ avatarUrl: "https://example.com/chaser-avatar.jpg" }).where(eq(users.id, chaser.user.id));
     await earnFromMessages(app, user.accessToken, leader.user.id, 3); // 1200 beans
     await earnFromMessages(app, user.accessToken, chaser.user.id, 2); // 800 beans
 
@@ -178,8 +185,8 @@ describe("Host rewards", () => {
     };
     expect(rewards.daily.myRank).toBe(2);
     expect(rewards.daily.tiers).toEqual([
-      { rank: 1, rewardBeans: 10_000, host: { hostId: leader.user.id, name: "Leader", avatarUrl: "https://example.com/leader.jpg", beans: 1200, isMe: false } },
-      { rank: 2, rewardBeans: 5_000, host: { hostId: chaser.user.id, name: null, avatarUrl: null, beans: 800, isMe: true } },
+      { rank: 1, rewardBeans: 10_000, host: { hostId: leader.user.id, name: "Leader", imageUrl: "https://example.com/leader-new.jpg", beans: 1200, isMe: false } },
+      { rank: 2, rewardBeans: 5_000, host: { hostId: chaser.user.id, name: null, imageUrl: "https://example.com/chaser-avatar.jpg", beans: 800, isMe: true } },
       { rank: 3, rewardBeans: 1_000, host: null },
     ]);
   });

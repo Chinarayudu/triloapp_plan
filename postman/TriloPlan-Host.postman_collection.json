@@ -2544,7 +2544,7 @@
                 "rewards"
               ]
             },
-            "description": "{ daily, weekly }, each: { enabled, periodStart, periodEnd, minQualifyingBeans, tiers: [{ rank, rewardBeans, host }], totalRewardBeans, myBeans, myRank (null until qualified), myRewardBeans (what this host would win if the period ended now), beansToQualify }. tiers[].host is whoever holds that rank right now — { hostId, name, avatarUrl, beans, isMe } — or null if nobody does yet (no phone numbers or balances). Re-fetch every 30–60s for a live view."
+            "description": "{ daily, weekly }, each: { enabled, periodStart, periodEnd, minQualifyingBeans, tiers: [{ rank, rewardBeans, host }], totalRewardBeans, myBeans, myRank (null until qualified), myRewardBeans (what this host would win if the period ended now), beansToQualify }. tiers[].host is whoever holds that rank right now — { hostId, name, imageUrl (the host's newest gallery photo, or their profile photo if they have none), beans, isMe } — or null if nobody does yet (no phone numbers or balances). Re-fetch every 30–60s for a live view."
           },
           "event": [
             {
@@ -2557,7 +2557,7 @@
                   "  const b = pm.response.json();",
                   "  for (const p of [b.daily, b.weekly]) {",
                   "    pm.expect(p).to.have.keys('enabled', 'periodStart', 'periodEnd', 'minQualifyingBeans', 'tiers', 'totalRewardBeans', 'myBeans', 'myRank', 'myRewardBeans', 'beansToQualify');",
-                  "    p.tiers.forEach(t => { pm.expect(t).to.have.property('host'); if (t.host) pm.expect(t.host).to.have.keys('hostId', 'name', 'avatarUrl', 'beans', 'isMe'); });",
+                  "    p.tiers.forEach(t => { pm.expect(t).to.have.property('host'); if (t.host) pm.expect(t.host).to.have.keys('hostId', 'name', 'imageUrl', 'beans', 'isMe'); });",
                   "  }",
                   "});"
                 ]

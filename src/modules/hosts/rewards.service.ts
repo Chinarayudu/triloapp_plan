@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { hostRewardConfigs, hostRewardPayouts, hostRewardSettlements, ledgerEntries, users } from "../../db/schema";
+import { hostGalleryItems, hostRewardConfigs, hostRewardPayouts, hostRewardSettlements, ledgerEntries, users } from "../../db/schema";
 import { writeAuditLog } from "../../lib/auditLog";
 import { addDays, dateInTimeZone, DEFAULT_TIME_ZONE, startOfDayInTimeZone } from "../../lib/dayBounds";
 import { logger } from "../../lib/logger";
@@ -129,9 +129,7 @@ export async function getHostRewards(hostId: string, now: Date = new Date()) {
     const standings = config.enabled ? await rankHosts(db, start, end, config.minQualifyingBeans) : [];
     const myRank = standings.find((r) => r.hostId === hostId)?.rank ?? null;
     const holders = standings.slice(0, config.tiers.length);
-    const cards = holders.length
-      ? await db.select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl }).from(users).where(inArray(users.id, holders.map((h) => h.hostId)))
-      : [];
+    const cards = await getHostCards(holders.map((h) => h.hostId));
     result[period] = {
       enabled: config.enabled,
       periodStart: start,
@@ -141,11 +139,11 @@ export async function getHostRewards(hostId: string, now: Date = new Date()) {
       // Other hosts' name, photo and beans in this period only — never phone or balance.
       tiers: config.tiers.map((tier) => {
         const holder = holders[tier.rank - 1];
-        const card = holder && cards.find((c) => c.id === holder.hostId);
+        const card = holder && cards.get(holder.hostId);
         return {
           ...tier,
           host: holder
-            ? { hostId: holder.hostId, name: card?.name ?? null, avatarUrl: card?.avatarUrl ?? null, beans: holder.beans, isMe: holder.hostId === hostId }
+            ? { hostId: holder.hostId, name: card?.name ?? null, imageUrl: card?.imageUrl ?? null, beans: holder.beans, isMe: holder.hostId === hostId }
             : null,
         };
       }),
@@ -159,6 +157,25 @@ export async function getHostRewards(hostId: string, now: Date = new Date()) {
     };
   }
   return result;
+}
+
+// Name and picture for each host. The picture is the one the User app shows
+// for a host: their newest gallery photo, or their profile photo (avatarUrl)
+// if they have no gallery photo.
+async function getHostCards(hostIds: string[]) {
+  const cards = new Map<string, { name: string | null; imageUrl: string | null }>();
+  if (hostIds.length === 0) return cards;
+  const people = await db.select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl }).from(users).where(inArray(users.id, hostIds));
+  const photos = await db
+    .select({ hostId: hostGalleryItems.hostId, url: hostGalleryItems.url })
+    .from(hostGalleryItems)
+    .where(and(inArray(hostGalleryItems.hostId, hostIds), eq(hostGalleryItems.mediaType, "photo")))
+    .orderBy(desc(hostGalleryItems.createdAt));
+  for (const person of people) {
+    const newestPhoto = photos.find((p) => p.hostId === person.id);
+    cards.set(person.id, { name: person.name, imageUrl: newestPhoto?.url ?? person.avatarUrl });
+  }
+  return cards;
 }
 
 // Settles one closed period exactly once: the settlement row, every payout row
