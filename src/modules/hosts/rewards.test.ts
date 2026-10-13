@@ -3,10 +3,10 @@ import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../app";
 import { db } from "../../db/client";
-import { hostRewardConfigs, hostWallets, ledgerEntries, notifications } from "../../db/schema";
+import { hostRewardConfigs, hostWallets, ledgerEntries, notifications, users } from "../../db/schema";
 import { fundUserWallet, registerAndLogin, registerAndLoginAdmin } from "../../test/helpers";
 import { reconcileHostWallets } from "../wallet/reconciliation.service";
-import { periodContaining, settleRewardPeriod } from "./rewards.service";
+import { getHostRewards, periodContaining, settleRewardPeriod } from "./rewards.service";
 
 type App = ReturnType<typeof createApp>;
 
@@ -150,6 +150,38 @@ describe("Host rewards", () => {
 
     // Leave weekly rewards off again for the rest of the suite.
     await request(app).post("/admin/host-rewards/weekly").set("Authorization", `Bearer ${admin.accessToken}`).send({ enabled: false, minQualifyingBeans: 0, tiers: [] });
+  });
+
+  it("shows the host holding each rank right now, with name and photo", async () => {
+    const app = createApp();
+    const user = await registerAndLogin(app, "user");
+    await fundUserWallet(app, user.accessToken, 100_000);
+    const leader = await registerAndLogin(app, "host");
+    const chaser = await registerAndLogin(app, "host");
+    await db.update(users).set({ name: "Leader", avatarUrl: "https://example.com/leader.jpg" }).where(eq(users.id, leader.user.id));
+    await earnFromMessages(app, user.accessToken, leader.user.id, 3); // 1200 beans
+    await earnFromMessages(app, user.accessToken, chaser.user.id, 2); // 800 beans
+
+    const { start } = randomPastHour();
+    const day = periodContaining("daily", start);
+    await moveEarningsInto([leader.user.id, chaser.user.id], new Date(day.start.getTime() + 60_000));
+    await db.insert(hostRewardConfigs).values({
+      period: "daily",
+      enabled: true,
+      minQualifyingBeans: 500,
+      tiers: [{ rank: 1, rewardBeans: 10_000 }, { rank: 2, rewardBeans: 5_000 }, { rank: 3, rewardBeans: 1_000 }],
+      effectiveFrom: day.start,
+    });
+
+    const rewards = (await getHostRewards(chaser.user.id, new Date(day.start.getTime() + 3_600_000))) as {
+      daily: { tiers: Array<{ rank: number; rewardBeans: number; host: Record<string, unknown> | null }>; myRank: number };
+    };
+    expect(rewards.daily.myRank).toBe(2);
+    expect(rewards.daily.tiers).toEqual([
+      { rank: 1, rewardBeans: 10_000, host: { hostId: leader.user.id, name: "Leader", avatarUrl: "https://example.com/leader.jpg", beans: 1200, isMe: false } },
+      { rank: 2, rewardBeans: 5_000, host: { hostId: chaser.user.id, name: null, avatarUrl: null, beans: 800, isMe: true } },
+      { rank: 3, rewardBeans: 1_000, host: null },
+    ]);
   });
 
   it("uses India-time days and Monday-to-Monday weeks", () => {

@@ -126,14 +126,29 @@ export async function getHostRewards(hostId: string, now: Date = new Date()) {
     const config = await getRewardConfig(period, now);
     const { start, end } = periodContaining(period, now);
     const myBeans = await hostBeansInPeriod(hostId, start, end);
-    const standing = config.enabled ? (await rankHosts(db, start, end, config.minQualifyingBeans)).find((r) => r.hostId === hostId) : undefined;
-    const myRank = standing?.rank ?? null;
+    const standings = config.enabled ? await rankHosts(db, start, end, config.minQualifyingBeans) : [];
+    const myRank = standings.find((r) => r.hostId === hostId)?.rank ?? null;
+    const holders = standings.slice(0, config.tiers.length);
+    const cards = holders.length
+      ? await db.select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl }).from(users).where(inArray(users.id, holders.map((h) => h.hostId)))
+      : [];
     result[period] = {
       enabled: config.enabled,
       periodStart: start,
       periodEnd: end,
       minQualifyingBeans: config.minQualifyingBeans,
-      tiers: config.tiers,
+      // Each rank with the host holding it right now (null = nobody yet).
+      // Other hosts' name, photo and beans in this period only — never phone or balance.
+      tiers: config.tiers.map((tier) => {
+        const holder = holders[tier.rank - 1];
+        const card = holder && cards.find((c) => c.id === holder.hostId);
+        return {
+          ...tier,
+          host: holder
+            ? { hostId: holder.hostId, name: card?.name ?? null, avatarUrl: card?.avatarUrl ?? null, beans: holder.beans, isMe: holder.hostId === hostId }
+            : null,
+        };
+      }),
       totalRewardBeans: config.tiers.reduce((sum, t) => sum + t.rewardBeans, 0),
       myBeans,
       // null until the host has earned at least minQualifyingBeans (and 1 bean).
