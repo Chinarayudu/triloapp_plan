@@ -18,6 +18,14 @@ Copy this for each new entry, filled in, added to the top of the log below.
 
 ---
 
+### [2026-10-13] Host photos are `http://localhost:9000/triloplan-local-fake-bucket/...` URLs (rewards table, host list, profile)
+
+**Symptom**: `GET /host/me/rewards` returned `tiers[].host.imageUrl` = `http://localhost:9000/triloplan-local-fake-bucket/avatar/<hostId>/<uuid>.jpg` — a URL no app can load. The same broken URL showed anywhere that account's `avatarUrl` is used.
+**Root cause**: uploads save the file's full public URL in the database at upload time (`getPublicUrl()`, `src/lib/s3.ts`). The local `.env` combined the shared/live Neon `DATABASE_URL` with a local MinIO (`AWS_S3_ENDPOINT=http://localhost:9000`), so a profile photo uploaded through a locally-running backend went to MinIO on that machine and its localhost URL was saved into the live database. Not a rewards-code bug — it passes the stored URL through.
+**Affected files**: `src/config/env.ts` (startup guard). Data: `users.avatar_url` on 2 accounts (1 host, 1 user) in the live DB — the files only ever existed in local MinIO and can't be recovered. Gallery items were all real S3 URLs (8), none affected.
+**Fix**: (1) data — set `avatar_url = NULL` where it starts with `http://localhost`; the apps fall back to the newest gallery photo / default avatar and the host can re-upload through the deployed app. (2) code — the backend now refuses to start when `AWS_S3_ENDPOINT` is localhost but `DATABASE_URL` isn't, so local dev must pair local MinIO with a local DB, or the shared DB with real S3.
+**Call sites checked**: `getPublicUrl()` callers (`users.routes.ts` avatar and gallery upload-url) unchanged — production has no `AWS_S3_ENDPOINT` and builds real S3 URLs. Guard verified in three setups: live DB + MinIO refuses to start; test DB + MinIO (vitest, CI) and live DB + real S3 start. Full suite 207 passed.
+
 ## Log
 
 ### [2026-10-06] Can't attach images when creating a support ticket

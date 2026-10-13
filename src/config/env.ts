@@ -158,4 +158,17 @@ if (parsed.data.NODE_ENV === "production" && parsed.data.CASHFREE_ENV !== "produ
   process.exit(1);
 }
 
+// Uploads store the file's full URL in the database (lib/s3.ts's getPublicUrl).
+// With storage on a local MinIO but a shared database (e.g. the live Neon DB),
+// every upload saves a localhost URL there that no one else can load — this
+// happened to real accounts' profile photos (BUG_HISTORY.md, 2026-10-13).
+const isLocalHost = (url: string) => /^[a-z]+:\/\/(?:[^@/]*@)?(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(url);
+if (parsed.data.AWS_S3_ENDPOINT && isLocalHost(parsed.data.AWS_S3_ENDPOINT) && !isLocalHost(parsed.data.DATABASE_URL)) {
+  console.error(
+    "AWS_S3_ENDPOINT is a local MinIO but DATABASE_URL is a shared database — uploads would save localhost URLs into it. " +
+      "Use a local database with local MinIO, or real S3 settings (no AWS_S3_ENDPOINT) with the shared database.",
+  );
+  process.exit(1);
+}
+
 export const env = parsed.data;
