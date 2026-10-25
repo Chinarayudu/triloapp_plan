@@ -1,10 +1,14 @@
 name: CI
 
+# Pushes to main are tested by deploy-prod.yml, which calls this workflow
+# before deploying. Render deploys develop only after these checks pass
+# (render.yaml's autoDeployTrigger).
 on:
   push:
-    branches: [main]
+    branches: [develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+  workflow_call:
 
 jobs:
   build-and-test:

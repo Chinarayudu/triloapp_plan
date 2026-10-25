@@ -1,5 +1,7 @@
-# Render Blueprint (https://render.com/docs/blueprint-spec) for a testing
-# deployment of this backend — NOT a production configuration. NODE_ENV is
+# Render Blueprint (https://render.com/docs/blueprint-spec) for the DEV
+# server: deploys the develop branch, after CI passes. Production runs on AWS
+# from main instead (deploy/README.md). Its DATABASE_URL must be the Neon
+# "dev" branch, never prod. NODE_ENV is
 # "development" on purpose so frontend teams can hit a real URL without real
 # OTP/SMS: it keeps the OTP bypass (OTP_BYPASS_VERIFICATION, otp.service.ts)
 # usable and the two dev-only money endpoints (POST /wallet/dev-credit,
@@ -19,6 +21,8 @@ services:
     name: triloplan-backend
     runtime: node
     plan: free
+    branch: develop
+    autoDeployTrigger: checksPass
     buildCommand: npm install && npm run build && npm run db:migrate
     startCommand: npm start
     healthCheckPath: /health

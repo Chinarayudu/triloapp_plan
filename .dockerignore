@@ -1,0 +1,15 @@
+# secrets/ and every .env hold real keys — they must never end up in an image.
+secrets/
+.env
+.env.*
+*.pem
+node_modules/
+dist/
+coverage/
+.git/
+.github/
+.claude/
+postman/
+deploy/
+*.md
+*.log

@@ -1,0 +1,43 @@
+# Production server stack (deploy/README.md). deploy.sh copies this to
+# /opt/triloplan/docker-compose.yml on the server on every deploy.
+#
+# ${API_IMAGE} and ${CLOUDFLARE_TUNNEL_TOKEN} come from /opt/triloplan/.env,
+# which deploy.sh writes. The app's own settings come from app.env (SSM).
+
+services:
+  api:
+    image: ${API_IMAGE}
+    env_file: app.env
+    environment:
+      PORT: "4000"
+      # Local Valkey: billing ticks (BullMQ) and presence survive an api
+      # restart, so a deploy doesn't end live calls.
+      REDIS_URL: redis://valkey:6379
+    depends_on:
+      - valkey
+    restart: unless-stopped
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    # appendonly: data survives a restart. noeviction: BullMQ requires it —
+    # an evicted billing job would silently stop a call's billing.
+    command: ["valkey-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - valkey-data:/data
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+
+volumes:
+  valkey-data:
