@@ -265,6 +265,50 @@
               }
             }
           ]
+        },
+        {
+          "name": "3. Firebase Phone Login — User App (alternative to 1+2)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idToken\": \"<Firebase ID token from the app after phone verification>\",\n  \"role\": \"user\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/user/auth/firebase/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "auth",
+                "firebase",
+                "verify"
+              ]
+            },
+            "description": "Instead of Request OTP + Verify OTP: the app verifies the phone with the Firebase SDK (Firebase sends the SMS), then sends the Firebase ID token here. Body { idToken, role: \"user\", deviceFingerprint?, referralCode? (host signup only) }. The phone number is taken from the verified token, never the body. Returns exactly what Verify OTP returns: { accessToken, refreshToken, user: { id, role, phone, kycStatus }, referralApplied }. Errors: 401 invalid/expired token, 400 token not from phone sign-in or missing idToken, 403 suspended account, 503 Firebase not configured on the server. This request sends a placeholder token, so it can only show the endpoint answering (401 with Firebase configured, 503 without); paste a real token from the app to log in."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('endpoint answers (placeholder token is refused)', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([401, 503]);",
+                  "  pm.expect(pm.response.json().error).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

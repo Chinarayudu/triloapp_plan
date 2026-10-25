@@ -5,6 +5,7 @@ import { z } from "zod";
 import { AppError } from "../../lib/errors";
 import { requireAuth } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
+import { verifyFirebasePhoneToken } from "../../lib/firebaseAuth";
 import { logger } from "../../lib/logger";
 import { verifyPassword } from "../../lib/password";
 import { recordLoginAndCheckMultiAccounting } from "../moderation/fraud.service";
@@ -31,7 +32,61 @@ const verifySchema = z.object({
   // creates a NEW host account (hosts/referrals.service.ts).
   referralCode: z.string().trim().min(1).max(20).optional(),
 });
+// Firebase Phone Auth (lib/firebaseAuth.ts): the phone comes from the verified
+// token, never from the request body.
+const firebaseVerifySchema = z.object({
+  idToken: z.string().min(1),
+  role: z.enum(["user", "host"]).default("user"),
+  deviceFingerprint: z.string().min(1).max(200).optional(),
+  referralCode: z.string().trim().min(1).max(20).optional(),
+});
 const refreshSchema = z.object({ refreshToken: z.string().min(1) });
+
+// Everything after the phone number has been proven — by our own OTP or by
+// Firebase — so both login paths create, check and sign in accounts the same way.
+async function logInVerifiedPhone(
+  phone: string,
+  role: "user" | "host",
+  deviceFingerprint: string | undefined,
+  referralCode: string | undefined,
+) {
+  // Looked up strictly by (phone, role) — this phone number may
+  // separately have a "user" account, a "host" account, or both
+  // (users table is unique per phone+role, not phone alone), each a
+  // fully independent identity/wallet. Verifying via /user/auth/...
+  // with role "user" only ever finds-or-creates that phone's USER
+  // account; it can never return or escalate into its HOST account
+  // (or vice versa via /host/auth/...) — they're different rows.
+  // A referral only counts for a brand-new host account. A code that isn't
+  // an active host's doesn't block signup — referralApplied tells the app.
+  let user = await findUserByPhone(phone, role);
+  let referralApplied = false;
+  if (!user) {
+    const referrer = role === "host" && referralCode ? await findReferrerByCode(referralCode) : undefined;
+    user = await createUser(phone, role, referrer?.id);
+    referralApplied = Boolean(referrer);
+  }
+
+  if (user.status !== "active") {
+    throw new AppError(403, "Account is suspended");
+  }
+
+  // Awaited (not fire-and-forget) so the result is deterministic for
+  // callers/tests, but never lets a fraud-check hiccup fail a
+  // legitimate login — this is a background signal, not a gate.
+  try {
+    await recordLoginAndCheckMultiAccounting(user.id, deviceFingerprint);
+  } catch (err) {
+    logger.error({ err }, "Multi-accounting check failed");
+  }
+
+  const tokens = await issueTokenPair(user.id, user.role);
+  return {
+    ...tokens,
+    user: { id: user.id, role: user.role, phone: user.phone, kycStatus: user.kycStatus },
+    referralApplied,
+  };
+}
 
 // A factory, not a module-level router: express-rate-limit's store is
 // created fresh per call, so each createApp() gets its own isolated
@@ -65,43 +120,18 @@ export function createOtpAuthRouter(): Router {
     try {
       const { phone, code, role, deviceFingerprint, referralCode } = req.body as z.infer<typeof verifySchema>;
       await verifyOtp(phone, code);
+      res.json(await logInVerifiedPhone(phone, role, deviceFingerprint, referralCode));
+    } catch (err) {
+      next(err);
+    }
+  });
 
-      // Looked up strictly by (phone, role) — this phone number may
-      // separately have a "user" account, a "host" account, or both
-      // (users table is unique per phone+role, not phone alone), each a
-      // fully independent identity/wallet. Verifying via /user/auth/...
-      // with role "user" only ever finds-or-creates that phone's USER
-      // account; it can never return or escalate into its HOST account
-      // (or vice versa via /host/auth/...) — they're different rows.
-      // A referral only counts for a brand-new host account. A code that isn't
-      // an active host's doesn't block signup — referralApplied tells the app.
-      let user = await findUserByPhone(phone, role);
-      let referralApplied = false;
-      if (!user) {
-        const referrer = role === "host" && referralCode ? await findReferrerByCode(referralCode) : undefined;
-        user = await createUser(phone, role, referrer?.id);
-        referralApplied = Boolean(referrer);
-      }
-
-      if (user.status !== "active") {
-        throw new AppError(403, "Account is suspended");
-      }
-
-      // Awaited (not fire-and-forget) so the result is deterministic for
-      // callers/tests, but never lets a fraud-check hiccup fail a
-      // legitimate login — this is a background signal, not a gate.
-      try {
-        await recordLoginAndCheckMultiAccounting(user.id, deviceFingerprint);
-      } catch (err) {
-        logger.error({ err }, "Multi-accounting check failed");
-      }
-
-      const tokens = await issueTokenPair(user.id, user.role);
-      res.json({
-        ...tokens,
-        user: { id: user.id, role: user.role, phone: user.phone, kycStatus: user.kycStatus },
-        referralApplied,
-      });
+  // Instead of otp/request + otp/verify: the app did the OTP with Firebase.
+  router.post("/firebase/verify", validateBody(firebaseVerifySchema), async (req, res, next) => {
+    try {
+      const { idToken, role, deviceFingerprint, referralCode } = req.body as z.infer<typeof firebaseVerifySchema>;
+      const phone = await verifyFirebasePhoneToken(idToken);
+      res.json(await logInVerifiedPhone(phone, role, deviceFingerprint, referralCode));
     } catch (err) {
       next(err);
     }

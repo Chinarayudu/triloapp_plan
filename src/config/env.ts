@@ -130,6 +130,15 @@ const envSchema = z.object({
   // Unset = the bot never replies, even when switched on in admin; tickets
   // simply wait for a person, as before the bot existed.
   ANTHROPIC_API_KEY: z.string().optional(),
+  // Optional as a group — Firebase Phone Auth login (lib/firebaseAuth.ts,
+  // POST /auth/firebase/verify): the apps do the OTP with the Firebase SDK
+  // (Firebase sends the SMS, so no DLT registration of our own is needed) and
+  // the backend verifies the resulting ID token. From the Firebase project's
+  // service account key (Project settings → Service accounts). The private key
+  // may be pasted with literal "\n" escapes. Missing = that endpoint returns 503.
+  FIREBASE_PROJECT_ID: z.string().optional(),
+  FIREBASE_CLIENT_EMAIL: z.string().optional(),
+  FIREBASE_PRIVATE_KEY: z.string().optional(),
   // Optional (lib/redis.ts). Set it before running more than one backend
   // instance: presence, call timers, rate limits, Socket.IO fan-out and the
   // support bot lock then live in Redis. Unset = all of that stays in memory,

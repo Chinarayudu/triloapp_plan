@@ -60,6 +60,11 @@ export default defineConfig({
       CASHFREE_PG_SECRET_KEY: "",
       CASHFREE_PAYOUT_CLIENT_ID: "",
       CASHFREE_PAYOUT_CLIENT_SECRET: "",
+      // Never call real Firebase from tests — firebaseAuth.test.ts fakes the
+      // token check; firebaseAuth.config.test.ts checks the not-configured 503.
+      FIREBASE_PROJECT_ID: "",
+      FIREBASE_CLIENT_EMAIL: "",
+      FIREBASE_PRIVATE_KEY: "",
       // In-memory presence/timers/rate limits/locks by default, even if .env
       // has a REDIS_URL. Run with TEST_REDIS_URL=redis://... to run the suite
       // in Redis mode instead (lib/redis.ts).
